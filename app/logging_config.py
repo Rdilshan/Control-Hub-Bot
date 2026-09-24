@@ -74,3 +74,7 @@ def setup_logging(log_level_name: str = "INFO") -> None:
 def get_logger(name: str) -> logging.Logger:
     """Convenience getter for logger instances."""
     return logging.getLogger(name)
+
+
+logger = get_logger("controlhub")
+

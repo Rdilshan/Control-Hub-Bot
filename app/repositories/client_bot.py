@@ -166,6 +166,13 @@ class ClientBotRepository(BaseRepository[ClientBot]):
             await self.session.flush()
         return bot
 
+    async def update_status(self, bot_id: int, status: ClientBotStatus) -> Optional[ClientBot]:
+        bot = await self.get_by_id(bot_id)
+        if bot:
+            bot.status = status
+            await self.session.flush()
+        return bot
+
     async def count_all(self) -> int:
         stmt = select(func.count(ClientBot.id))
         result = await self.session.execute(stmt)

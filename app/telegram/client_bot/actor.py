@@ -19,11 +19,18 @@ def extract_telegram_actor(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     callback_data: Optional[str] = None
     update_type: str = "unknown"
 
+    video: Optional[Dict[str, Any]] = None
+    document: Optional[Dict[str, Any]] = None
+    caption: Optional[str] = None
+
     if "message" in update:
         msg = update["message"]
         user = msg.get("from")
         chat = msg.get("chat")
         text = msg.get("text")
+        caption = msg.get("caption")
+        video = msg.get("video")
+        document = msg.get("document")
         message_id = msg.get("message_id")
         update_type = "message"
     elif "callback_query" in update:
@@ -58,7 +65,10 @@ def extract_telegram_actor(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "last_name": user.get("last_name", ""),
         "language_code": user.get("language_code"),
         "is_bot": user.get("is_bot", False),
-        "text": text.strip() if text else None,
+        "text": text.strip() if text else (caption.strip() if caption else None),
+        "caption": caption.strip() if caption else None,
+        "video": video,
+        "document": document,
         "message_id": message_id,
         "callback_query_id": callback_query_id,
         "callback_data": callback_data,

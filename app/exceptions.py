@@ -114,3 +114,45 @@ class TemporaryError(ApplicationError):
             status_code=status_code,
             details=details,
         )
+
+
+class UnlockifyError(ExternalServiceError):
+    """Base exception for Unlockify provider interactions."""
+
+    def __init__(
+        self,
+        message: str,
+        code: str = "UNLOCKIFY_ERROR",
+        status_code: int = 502,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(message=message, code=code, status_code=status_code, details=details)
+
+
+class UnlockifyTimeoutError(UnlockifyError):
+    """Raised when Unlockify request times out."""
+
+    def __init__(self, message: str = "Unlockify request timed out", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, code="UNLOCKIFY_TIMEOUT", status_code=504, details=details)
+
+
+class UnlockifyNetworkError(UnlockifyError):
+    """Raised when network connection to Unlockify fails."""
+
+    def __init__(self, message: str = "Network error communicating with Unlockify", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, code="UNLOCKIFY_NETWORK_ERROR", status_code=502, details=details)
+
+
+class UnlockifyInvalidResponseError(UnlockifyError):
+    """Raised when Unlockify returns unexpected or malformed response data."""
+
+    def __init__(self, message: str = "Invalid response from Unlockify", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, code="UNLOCKIFY_INVALID_RESPONSE", status_code=502, details=details)
+
+
+class UnlockifyRequestRejectedError(UnlockifyError):
+    """Raised when Unlockify rejects request due to invalid input (HTTP 4xx)."""
+
+    def __init__(self, message: str = "Unlockify rejected request", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, code="UNLOCKIFY_REJECTED_REQUEST", status_code=400, details=details)
+

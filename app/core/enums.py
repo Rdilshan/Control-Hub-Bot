@@ -57,6 +57,8 @@ class VideoStatus(str, Enum):
 class ProcessingStatus(str, Enum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
+    PROCESSING_THUMBNAIL = "PROCESSING_THUMBNAIL"
+    CREATING_UNLOCK_LINK = "CREATING_UNLOCK_LINK"
     READY = "READY"
     FAILED = "FAILED"
 

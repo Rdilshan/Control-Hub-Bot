@@ -46,6 +46,83 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
         await self.session.flush()
         return job
 
+    async def create_video_processing_job(
+        self,
+        video_id: int,
+        client_bot_id: int,
+        client_id: Optional[int] = None,
+        thumbnail_file_id: Optional[str] = None,
+        queue_name: str = "video_processing",
+    ) -> BackgroundJob:
+        """Creates a PENDING background job for video processing pipeline."""
+        payload = {
+            "video_id": video_id,
+            "client_bot_id": client_bot_id,
+        }
+        if thumbnail_file_id:
+            payload["thumbnail_file_id"] = thumbnail_file_id
+
+        return await self.create_job(
+            job_type=JobType.VIDEO_PROCESS,
+            payload=payload,
+            client_id=client_id,
+            client_bot_id=client_bot_id,
+            video_id=video_id,
+            queue_name=queue_name,
+        )
+
+    async def create_broadcast_job(
+        self,
+        broadcast_id: int,
+        video_id: int,
+        client_bot_id: int,
+        client_id: Optional[int] = None,
+        queue_name: str = "broadcast",
+    ) -> BackgroundJob:
+        """Creates a PENDING background job for broadcast dissemination."""
+        payload = {
+            "broadcast_id": broadcast_id,
+            "video_id": video_id,
+            "client_bot_id": client_bot_id,
+        }
+        return await self.create_job(
+            job_type=JobType.BROADCAST,
+            payload=payload,
+            client_id=client_id,
+            client_bot_id=client_bot_id,
+            video_id=video_id,
+            broadcast_id=broadcast_id,
+            queue_name=queue_name,
+        )
+
+    async def get_active_for_video(self, video_id: int) -> Optional[BackgroundJob]:
+        """Gets active background job (PENDING, QUEUED, RUNNING, RETRYING) for a video."""
+        stmt = (
+            select(BackgroundJob)
+            .where(
+                BackgroundJob.video_id == video_id,
+                BackgroundJob.job_type == JobType.VIDEO_PROCESS,
+                BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRYING]),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_active_for_broadcast(self, broadcast_id: int) -> Optional[BackgroundJob]:
+        """Gets active background job for a broadcast."""
+        stmt = (
+            select(BackgroundJob)
+            .where(
+                BackgroundJob.broadcast_id == broadcast_id,
+                BackgroundJob.job_type == JobType.BROADCAST,
+                BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRYING]),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def has_active_catchup_job(self, client_bot_id: int, viewer_id: int) -> bool:
         """Checks if a pending or running catch-up job exists for the given viewer."""
         stmt = (
@@ -153,6 +230,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
     async def list_paginated(
         self,
         status: Optional[JobStatus] = None,
+        job_type: Optional[JobType] = None,
         page: int = 1,
         page_size: int = 10,
     ) -> Tuple[List[BackgroundJob], int]:
@@ -162,6 +240,9 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
         if status:
             count_stmt = count_stmt.where(BackgroundJob.status == status)
             query_stmt = query_stmt.where(BackgroundJob.status == status)
+        if job_type:
+            count_stmt = count_stmt.where(BackgroundJob.job_type == job_type)
+            query_stmt = query_stmt.where(BackgroundJob.job_type == job_type)
 
         total_res = await self.session.execute(count_stmt)
         total_count = total_res.scalar() or 0

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
     INTERNAL_API_SECRET: Optional[str] = None
 
+    # Video Processing & Unlockify Provider
+    UNLOCKIFY_API_BASE_URL: str = "https://developer.unlockify.ink/api/v1"
+    PUBLIC_APP_BASE_URL: str = "https://controlhub.example.com"
+
     @model_validator(mode="before")
     @classmethod
     def empty_str_to_none(cls, data: Any) -> Any:
@@ -84,3 +88,14 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Returns cached settings singleton instance."""
     return Settings()
+
+
+class SettingsProxy:
+    """Proxy to allow module-level `settings.FIELD` access while respecting lru_cache."""
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(get_settings(), item)
+
+
+settings = SettingsProxy()
+

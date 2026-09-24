@@ -16,6 +16,8 @@ class VideoBase(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     caption: Optional[str] = None
+    source_thumbnail_file_id: Optional[str] = None
+    source_thumbnail_file_unique_id: Optional[str] = None
 
 
 class VideoCreate(VideoBase):
@@ -29,6 +31,7 @@ class VideoRead(VideoBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    public_id: str
     client_bot_id: int
     created_by_admin_id: Optional[int] = None
     status: VideoStatus

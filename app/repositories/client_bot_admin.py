@@ -24,6 +24,13 @@ class ClientBotAdminRepository(BaseRepository[ClientBotAdmin]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_telegram_user_id(
+        self,
+        client_bot_id: int,
+        telegram_user_id: int,
+    ) -> Optional[ClientBotAdmin]:
+        return await self.get_by_bot_and_telegram_user(client_bot_id, telegram_user_id)
+
     async def is_admin_or_owner(self, client_bot_id: int, telegram_user_id: int) -> bool:
         admin = await self.get_by_bot_and_telegram_user(client_bot_id, telegram_user_id)
         return bool(admin and admin.is_active)

@@ -255,6 +255,93 @@ class TelegramClient:
         result = await self.request("getUpdates", json_data=payload)
         return result if isinstance(result, list) else []
 
+    async def get_file(self, file_id: str) -> Dict[str, Any]:
+        """Gets basic info about a file and prepares it for downloading."""
+        return await self.request("getFile", json_data={"file_id": file_id})
+
+    async def download_file(self, file_path: str) -> bytes:
+        """Downloads a small file (such as a thumbnail) from Telegram file storage."""
+        url = f"{self.base_url}/file/bot{self.token}/{file_path.lstrip('/')}"
+        masked_tok = mask_bot_token(self.token)
+
+        owns_client = False
+        client = self._client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            owns_client = True
+
+        try:
+            logger.debug(f"Downloading file from Telegram ({masked_tok}): {file_path}")
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.content
+        except Exception as exc:
+            logger.error(f"Failed to download file from Telegram ({masked_tok}): {exc}")
+            raise TelegramNetworkError(f"File download failed: {exc}") from exc
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    async def send_photo(
+        self,
+        chat_id: int | str,
+        photo: str | bytes,
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+        reply_markup: Optional[Dict[str, Any]] = None,
+        file_name: str = "preview.jpg",
+    ) -> Dict[str, Any]:
+        """Sends a photo using either a file_id/URL or raw image bytes."""
+        if isinstance(photo, str):
+            payload: Dict[str, Any] = {"chat_id": chat_id, "photo": photo}
+            if caption:
+                payload["caption"] = caption
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+            return await self.request("sendPhoto", json_data=payload)
+
+        # Multipart form data upload for raw image bytes
+        url = self._get_url("sendPhoto")
+        masked_tok = mask_bot_token(self.token)
+        data: Dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+        if reply_markup:
+            import json
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        files = {"photo": (file_name, photo, "image/jpeg")}
+
+        owns_client = False
+        client = self._client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            owns_client = True
+
+        try:
+            logger.debug(f"Uploading photo to Telegram ({masked_tok})")
+            response = await client.post(url, data=data, files=files)
+            resp_data = response.json()
+        except Exception as exc:
+            logger.error(f"Failed to upload photo to Telegram ({masked_tok}): {exc}")
+            raise TelegramNetworkError(f"Photo upload failed: {exc}") from exc
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        if not resp_data.get("ok"):
+            error_code = resp_data.get("error_code", response.status_code)
+            description = resp_data.get("description", "Unknown Telegram error")
+            if error_code in (401, 404):
+                raise TelegramInvalidTokenError(f"Invalid Telegram bot token: {description}")
+            raise TelegramAPIError(f"Telegram photo upload error: {description}", error_code=error_code)
+
+        return resp_data.get("result", {})
+
 
 async def validate_bot_token(
     token: str,

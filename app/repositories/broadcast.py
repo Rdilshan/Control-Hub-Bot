@@ -28,6 +28,11 @@ class BroadcastRepository(BaseRepository[Broadcast]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_video_id(self, video_id: int) -> Optional[Broadcast]:
+        stmt = select(Broadcast).where(Broadcast.video_id == video_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def create_broadcast(
         self,
         client_bot_id: int,
