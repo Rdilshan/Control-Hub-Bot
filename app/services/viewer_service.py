@@ -24,6 +24,7 @@ from app.repositories.event import BotEventRepository
 from app.repositories.job import BackgroundJobRepository
 from app.repositories.video import VideoRepository
 from app.repositories.viewer import ViewerRepository
+from app.services.catchup_service import CatchupService
 from app.telegram.client import TelegramClient
 from app.telegram.client_bot import messages
 
@@ -33,13 +34,18 @@ logger = get_logger(__name__)
 class ViewerService:
     """Domain service managing Viewer registration, communication, and historical catch-up queuing."""
 
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        catchup_service: Optional[CatchupService] = None,
+    ):
         self.session = session
         self.viewer_repo = ViewerRepository(session)
         self.video_repo = VideoRepository(session)
         self.catchup_repo = CatchupDeliveryRepository(session)
         self.job_repo = BackgroundJobRepository(session)
         self.event_repo = BotEventRepository(session)
+        self.catchup_service = catchup_service or CatchupService(session)
 
     async def get_bot_settings(self, client_bot_id: int) -> Optional[ClientBotSettings]:
         """Retrieves configured messages for a Client Bot."""
@@ -166,42 +172,12 @@ class ViewerService:
         client_id: int,
         viewer_id: int,
     ) -> bool:
-        """Determines if the viewer needs historical video catch-up and queues a background job."""
-        # 1. Fetch available published READY videos for this bot
-        ready_videos = await self.video_repo.list_ready_videos_for_catchup(client_bot_id=client_bot_id, limit=50)
-        if not ready_videos:
-            return False
-
-        # 2. Fetch video IDs already delivered to this viewer
-        delivered_ids = set(await self.catchup_repo.list_delivered_video_ids_for_viewer(viewer_id=viewer_id))
-
-        # 3. Check for undelivered historical videos
-        pending_video_ids = [v.id for v in ready_videos if v.id not in delivered_ids]
-        if not pending_video_ids:
-            return False
-
-        # 4. Check if an active catchup job is already queued
-        has_job = await self.job_repo.has_active_catchup_job(client_bot_id=client_bot_id, viewer_id=viewer_id)
-        if has_job:
-            return False
-
-        # 5. Enqueue Catch-up background job
-        await self.job_repo.create_job(
-            job_type=JobType.CATCHUP,
-            client_id=client_id,
+        """Determines if the viewer needs historical video catch-up and initializes/queues catchup state."""
+        catchup, job = await self.catchup_service.initialize_or_resume_catchup(
             client_bot_id=client_bot_id,
-            payload={
-                "viewer_id": viewer_id,
-                "client_bot_id": client_bot_id,
-                "pending_video_ids": pending_video_ids,
-                "total_eligible": len(pending_video_ids),
-            },
-            queue_name="catchup",
+            viewer_id=viewer_id,
         )
-        logger.info(
-            f"Queued CATCHUP job for viewer #{viewer_id} on bot #{client_bot_id} ({len(pending_video_ids)} videos)"
-        )
-        return True
+        return job is not None
 
     async def mark_viewer_blocked(self, client_bot_id: int, telegram_user_id: int) -> Optional[Viewer]:
         """Marks a viewer as blocked when outgoing deliveries encounter Forbidden / Blocked errors."""

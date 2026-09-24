@@ -36,10 +36,13 @@ class Settings(BaseSettings):
     BOT_TOKEN_ENCRYPTION_KEY: str = "dGVzdF9mZXJuZXRfa2V5XzMyX2J5dGVzX2xlbmd0aF8xMjM="  # Base64 32-byte key
     TELEGRAM_API_BASE_URL: str = "https://api.telegram.org"
     TELEGRAM_REQUEST_TIMEOUT: float = 30.0
-    # Broadcast Settings
+    # Broadcast & Catch-Up Settings
     TELEGRAM_BROADCAST_RATE_PER_SECOND: float = 25.0
     BROADCAST_BATCH_SIZE: int = 500
     BROADCAST_MAX_RETRY_ATTEMPTS: int = 3
+    CATCHUP_BATCH_SIZE: int = 10
+    CATCHUP_BATCH_DELAY_SECONDS: float = 30.0
+    MAX_ACTIVE_CATCHUP_VIEWERS_PER_BOT: int = 5
 
     # Logging
     LOG_LEVEL: str = "INFO"

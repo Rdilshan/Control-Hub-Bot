@@ -90,9 +90,13 @@ class DeliveryStatus(str, Enum):
 
 class CatchupStatus(str, Enum):
     PENDING = "PENDING"
-    SENT = "SENT"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
     SKIPPED = "SKIPPED"
+    SENT = "SENT"
 
 
 class JobType(str, Enum):
@@ -131,6 +135,8 @@ class BotEventType(str, Enum):
     BROADCAST_STARTED = "BROADCAST_STARTED"
     BROADCAST_COMPLETED = "BROADCAST_COMPLETED"
     VIDEO_DELIVERED_AFTER_UNLOCK = "VIDEO_DELIVERED_AFTER_UNLOCK"
+    CATCHUP_STARTED = "CATCHUP_STARTED"
+    CATCHUP_COMPLETED = "CATCHUP_COMPLETED"
 
 
 def enum_val(v: object) -> str:

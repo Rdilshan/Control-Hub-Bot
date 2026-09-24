@@ -4,6 +4,10 @@ from app.services.broadcast_creation_service import BroadcastCreationService
 from app.services.broadcast_delivery_service import BroadcastDeliveryService
 from app.services.broadcast_scheduler import BroadcastScheduler
 from app.services.broadcast_service import BroadcastService
+from app.services.catchup_delivery_service import CatchupDeliveryService
+from app.services.catchup_scheduler_service import CatchupSchedulerService
+from app.services.catchup_service import CatchupService
+from app.services.catchup_video_selector_service import CatchupVideoSelectorService
 from app.services.client_bot_connection_service import ClientBotConnectionService
 from app.services.client_bot_provisioning_service import ClientBotProvisioningService
 from app.services.client_bot_sponsor_service import ClientBotSponsorService
@@ -32,6 +36,10 @@ __all__ = [
     "BroadcastDeliveryService",
     "BroadcastScheduler",
     "BroadcastService",
+    "CatchupDeliveryService",
+    "CatchupSchedulerService",
+    "CatchupService",
+    "CatchupVideoSelectorService",
     "ClientBotConnectionService",
     "ClientBotProvisioningService",
     "ClientBotSponsorService",
