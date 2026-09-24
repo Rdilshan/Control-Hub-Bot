@@ -18,6 +18,7 @@ from app.repositories.video import VideoRepository
 from app.repositories.video_processing import VideoProcessingRepository
 from app.services.broadcast_creation_service import BroadcastCreationService
 from app.services.preview_photo_service import PreviewPhotoService
+from app.services.telegram_unlock_destination_service import TelegramUnlockDestinationService
 from app.services.unlockify_client import UnlockifyClient
 from app.services.video_destination_url_service import VideoDestinationUrlService
 from app.telegram.client import TelegramClient
@@ -31,6 +32,7 @@ class VideoProcessingService:
         session: AsyncSession,
         unlockify_client: Optional[UnlockifyClient] = None,
         destination_url_service: Optional[VideoDestinationUrlService] = None,
+        telegram_destination_service: Optional[TelegramUnlockDestinationService] = None,
     ):
         self.session = session
         self.video_repo = VideoRepository(session)
@@ -41,6 +43,7 @@ class VideoProcessingService:
         self.broadcast_service = BroadcastCreationService(session)
         self.unlockify_client = unlockify_client or UnlockifyClient()
         self.url_service = destination_url_service or VideoDestinationUrlService()
+        self.telegram_dest_service = telegram_destination_service or TelegramUnlockDestinationService()
 
     async def process_video(self, video_id: int) -> Dict[str, Any]:
         """Runs the video processing pipeline for the given video_id.
@@ -141,7 +144,13 @@ class VideoProcessingService:
                 unlock_url = proc.unlock_url
             else:
                 title = video.caption or video.file_name or f"Video {video.public_id}"
-                destination_url = self.url_service.build_destination_url(video.public_id)
+                if client_bot.username:
+                    destination_url = self.telegram_dest_service.build_destination(
+                        bot_username=client_bot.username,
+                        video_public_id=video.public_id,
+                    )
+                else:
+                    destination_url = self.url_service.build_destination_url(video.public_id)
 
                 link_data = await self.unlockify_client.create_link(
                     title=title,

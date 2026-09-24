@@ -14,6 +14,7 @@ from app.repositories.unlock_link import UnlockLinkRepository
 from app.repositories.broadcast import BroadcastRepository
 from app.repositories.delivery import BroadcastDeliveryRepository
 from app.repositories.catchup import CatchupDeliveryRepository
+from app.repositories.video_delivery import VideoDeliveryRepository
 from app.repositories.job import BackgroundJobRepository
 from app.repositories.event import BotEventRepository
 
@@ -32,6 +33,7 @@ __all__ = [
     "BroadcastRepository",
     "BroadcastDeliveryRepository",
     "CatchupDeliveryRepository",
+    "VideoDeliveryRepository",
     "BackgroundJobRepository",
     "BotEventRepository",
 ]

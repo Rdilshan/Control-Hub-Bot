@@ -103,6 +103,7 @@ class JobType(str, Enum):
     BROADCAST = "BROADCAST"
     CATCHUP = "CATCHUP"
     RETRY = "RETRY"
+    UNLOCK_VIDEO_DELIVERY = "UNLOCK_VIDEO_DELIVERY"
 
 
 class JobStatus(str, Enum):
@@ -129,6 +130,7 @@ class BotEventType(str, Enum):
     VIDEO_READY = "VIDEO_READY"
     BROADCAST_STARTED = "BROADCAST_STARTED"
     BROADCAST_COMPLETED = "BROADCAST_COMPLETED"
+    VIDEO_DELIVERED_AFTER_UNLOCK = "VIDEO_DELIVERED_AFTER_UNLOCK"
 
 
 def enum_val(v: object) -> str:

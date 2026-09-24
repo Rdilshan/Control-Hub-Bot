@@ -342,6 +342,39 @@ class TelegramClient:
 
         return resp_data.get("result", {})
 
+    async def send_video(
+        self,
+        chat_id: int | str,
+        video: str,
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+        reply_markup: Optional[Dict[str, Any]] = None,
+        duration: Optional[int] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        supports_streaming: bool = True,
+    ) -> Dict[str, Any]:
+        """Sends a video to a chat using a saved Telegram file_id without downloading the full video."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "video": video,
+            "supports_streaming": supports_streaming,
+        }
+        if caption:
+            payload["caption"] = caption
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        if duration:
+            payload["duration"] = duration
+        if width:
+            payload["width"] = width
+        if height:
+            payload["height"] = height
+
+        return await self.request("sendVideo", json_data=payload)
+
 
 async def validate_bot_token(
     token: str,

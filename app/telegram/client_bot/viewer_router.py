@@ -60,8 +60,23 @@ class ClientViewerRouter:
                 status=bot_ctx.status,
             )
 
-        # 1. Handle Viewer /start
+        # 1. Handle Viewer /start (including unlock deep links)
         if cmd == "/start":
+            parts = text.split(maxsplit=1)
+            start_param = parts[1].strip() if len(parts) > 1 else None
+
+            if start_param and start_param.startswith("unlock_"):
+                from app.telegram.client_bot.viewer.unlock import handle_viewer_unlock_command
+                return await handle_viewer_unlock_command(
+                    client_bot=bot_model,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    payload=start_param,
+                    actor_data=actor_data,
+                    telegram_client=self.telegram_client,
+                    session=session,
+                )
+
             return await viewer_service.handle_viewer_start(
                 client_bot=bot_model,
                 telegram_user_id=actor.telegram_user_id,
