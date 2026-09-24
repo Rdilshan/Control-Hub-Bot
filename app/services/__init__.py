@@ -36,6 +36,13 @@ from app.services.video_processing_service import VideoProcessingService
 from app.services.viewer_service import ViewerService
 from app.services.viewer_unlock_service import ViewerUnlockService
 
+from app.services.client_bot_stats_service import ClientBotStatsService
+from app.services.platform_stats_service import PlatformStatsService
+from app.services.queue_monitoring_service import QueueMonitoringService
+from app.services.job_monitoring_service import JobMonitoringService
+from app.services.broadcast_monitoring_service import BroadcastMonitoringService
+from app.services.system_monitoring_service import SystemMonitoringService
+
 __all__ = [
     "BotTokenEncryptionService",
     "BroadcastAudienceService",
@@ -72,4 +79,10 @@ __all__ = [
     "ViewerService",
     "ViewerUnlockService",
     "telegram_rate_limiter",
+    "ClientBotStatsService",
+    "PlatformStatsService",
+    "QueueMonitoringService",
+    "JobMonitoringService",
+    "BroadcastMonitoringService",
+    "SystemMonitoringService",
 ]

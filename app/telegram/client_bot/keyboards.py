@@ -25,3 +25,12 @@ def admin_dashboard_keyboard() -> Dict[str, Any]:
             ],
         ]
     }
+
+
+def admin_refresh_keyboard(refresh_callback: str) -> Dict[str, Any]:
+    """Inline keyboard with a single refresh button for stats and monitoring."""
+    return {
+        "inline_keyboard": [
+            [{"text": "🔄 Refresh", "callback_data": refresh_callback}],
+        ]
+    }

@@ -183,3 +183,106 @@ def admin_processing_list_message(videos: list) -> str:
 
     lines.append("\n<i>Background workers process videos automatically.</i>")
     return "\n".join(lines)
+
+
+def admin_stats_message(summary: dict) -> str:
+    users = summary.get("users", {})
+    videos = summary.get("videos", {})
+    bcasts = summary.get("broadcasts", {})
+
+    u_total = f"{users.get('total', 0):,}"
+    u_active = f"{users.get('active', 0):,}"
+    u_blocked = f"{users.get('blocked', 0):,}"
+    u_today = f"{users.get('new_today', 0):,}"
+
+    v_total = f"{videos.get('total', 0):,}"
+    v_ready = f"{videos.get('ready', 0):,}"
+    v_proc = f"{videos.get('processing', 0):,}"
+    v_failed = f"{videos.get('failed', 0):,}"
+
+    b_live_run = f"{bcasts.get('live_running', 0):,}"
+    b_live_wait = f"{bcasts.get('live_waiting', 0):,}"
+    b_catch_run = f"{bcasts.get('catchup_running', 0):,}"
+    b_catch_wait = f"{bcasts.get('catchup_waiting', 0):,}"
+
+    return (
+        "📊 <b>Bot Statistics</b>\n\n"
+        "👥 <b>Users</b>\n"
+        f"• Total: <b>{u_total}</b>\n"
+        f"• 🟢 Active: <b>{u_active}</b>\n"
+        f"• 🚫 Blocked: <b>{u_blocked}</b>\n"
+        f"• 🆕 New Today: <b>{u_today}</b>\n\n"
+        "🎬 <b>Videos</b>\n"
+        f"• Total: <b>{v_total}</b>\n"
+        f"• ✅ Ready: <b>{v_ready}</b>\n"
+        f"• ⚙️ Processing: <b>{v_proc}</b>\n"
+        f"• ❌ Failed: <b>{v_failed}</b>\n\n"
+        "📤 <b>Broadcasts (LIVE)</b>\n"
+        f"• ▶️ Running: <b>{b_live_run}</b>\n"
+        f"• ⏳ Waiting: <b>{b_live_wait}</b>\n\n"
+        "📥 <b>Catch-Up</b>\n"
+        f"• ▶️ Running: <b>{b_catch_run}</b>\n"
+        f"• ⏳ Waiting: <b>{b_catch_wait}</b>"
+    )
+
+
+def admin_users_message(users: dict) -> str:
+    total = f"{users.get('total', 0):,}"
+    active = f"{users.get('active', 0):,}"
+    blocked = f"{users.get('blocked', 0):,}"
+    today = f"{users.get('new_today', 0):,}"
+    seven_days = f"{users.get('new_7_days', 0):,}"
+
+    return (
+        "👥 <b>Audience & Subscribers</b>\n\n"
+        f"• Total Users: <b>{total}</b>\n"
+        f"• 🟢 Active: <b>{active}</b>\n"
+        f"• 🚫 Blocked: <b>{blocked}</b>\n"
+        f"• 🆕 New Today: <b>{today}</b>\n"
+        f"• 📅 Last 7 Days: <b>{seven_days}</b>\n\n"
+        "<i>Audience members are tracked automatically as they interact with your bot.</i>"
+    )
+
+
+def admin_processing_summary_message(proc: dict) -> str:
+    received = f"{proc.get('received', 0):,}"
+    preview = f"{proc.get('preview', 0):,}"
+    unlockify = f"{proc.get('unlockify', 0):,}"
+    ready_today = f"{proc.get('ready_today', 0):,}"
+    failed = f"{proc.get('failed', 0):,}"
+
+    return (
+        "⚙️ <b>Video Processing Pipeline</b>\n\n"
+        f"• 📥 Received: <b>{received}</b>\n"
+        f"• 🖼 Preview Generation: <b>{preview}</b>\n"
+        f"• 🔗 Unlockify Link Creation: <b>{unlockify}</b>\n"
+        f"• ✅ Ready Today: <b>{ready_today}</b>\n"
+        f"• ❌ Failed: <b>{failed}</b>\n\n"
+        "<i>Background workers process videos continuously.</i>"
+    )
+
+
+def admin_broadcasts_summary_message(bcasts: dict) -> str:
+    live_run = f"{bcasts.get('live_running', 0):,}"
+    live_wait = f"{bcasts.get('live_waiting', 0):,}"
+    live_comp = f"{bcasts.get('live_completed_today', 0):,}"
+    live_fail = f"{bcasts.get('live_failed', 0):,}"
+
+    cu_run = f"{bcasts.get('catchup_running', 0):,}"
+    cu_wait = f"{bcasts.get('catchup_waiting', 0):,}"
+    cu_comp = f"{bcasts.get('catchup_completed_today', 0):,}"
+    cu_fail = f"{bcasts.get('catchup_failed', 0):,}"
+
+    return (
+        "📤 <b>Broadcasts & Delivery Status</b>\n\n"
+        "<b>LIVE Broadcasts</b>\n"
+        f"• ▶️ Running: <b>{live_run}</b>\n"
+        f"• ⏳ Waiting: <b>{live_wait}</b>\n"
+        f"• ✅ Completed Today: <b>{live_comp}</b>\n"
+        f"• ❌ Failed: <b>{live_fail}</b>\n\n"
+        "<b>Catch-Up Delivery</b>\n"
+        f"• ▶️ Running Viewers: <b>{cu_run}</b>\n"
+        f"• ⏳ Waiting Viewers: <b>{cu_wait}</b>\n"
+        f"• ✅ Completed Today: <b>{cu_comp}</b>\n"
+        f"• ❌ Failed: <b>{cu_fail}</b>"
+    )

@@ -117,7 +117,37 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 5. Check /cancel outside session
+        # 5. Check /stats command
+        if cmd == "/stats":
+            from app.telegram.client_bot.admin.stats import handle_stats_command
+            return await handle_stats_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 6. Check /users command
+        if cmd == "/users":
+            from app.telegram.client_bot.admin.users import handle_users_command
+            return await handle_users_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 7. Check /broadcasts command
+        if cmd == "/broadcasts":
+            from app.telegram.client_bot.admin.broadcasts import handle_broadcasts_command
+            return await handle_broadcasts_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 8. Check /cancel outside session
         if cmd in ("/cancel", "cancel"):
             await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await self.telegram_client.send_message(
@@ -154,11 +184,8 @@ class ClientAdminRouter:
             )
             return {"ok": True, "action": "admin_start"}
 
-        # Built-in Admin Commands (Full workflows implemented in Stage 08+)
+        # Built-in Admin Commands
         admin_commands = {
-            "/stats": "📊 <b>Bot Analytics</b>\n\nViewer counts, video views, and unlock statistics will display here. (Stage 17)",
-            "/users": "👥 <b>Viewer Audience</b>\n\nSubscriber metrics and viewer management will appear here.",
-            "/broadcasts": "📢 <b>Broadcast Campaigns</b>\n\nCompose and schedule audience broadcasts here.",
             "/sponsor": "🔓 <b>Sponsor Configuration</b>\n\nConfigure your Unlockify API keys and monetization links here. (Stage 12)",
             "/startmessage": "💬 <b>Custom Start Message</b>\n\nCustomize the welcome message shown to new viewers.",
             "/defaultmessage": "🔁 <b>Default Reply Message</b>\n\nCustomize the fallback response for unrecognized viewer messages.",
@@ -192,6 +219,7 @@ class ClientAdminRouter:
     ) -> Dict[str, Any]:
         cb_id = actor_data.get("callback_query_id")
         cb_data = actor_data.get("callback_data") or ""
+        msg_id = actor_data.get("message_id") or actor_data.get("message", {}).get("message_id")
 
         if cb_id:
             await self.telegram_client.answer_callback_query(callback_query_id=cb_id)
@@ -228,19 +256,51 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        if cb_data == "admin:processing":
+        if cb_data in ("admin:processing", "admin:processing:refresh"):
             from app.telegram.client_bot.admin.processing import handle_processing_command
             return await handle_processing_command(
                 client_bot_id=bot_ctx.client_bot_id,
                 chat_id=actor.chat_id,
                 telegram_client=self.telegram_client,
                 session=session,
+                bypass_cache=cb_data.endswith(":refresh"),
+                message_id=msg_id if cb_data.endswith(":refresh") else None,
+            )
+
+        if cb_data in ("admin:stats", "admin:stats:refresh"):
+            from app.telegram.client_bot.admin.stats import handle_stats_command
+            return await handle_stats_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+                bypass_cache=cb_data.endswith(":refresh"),
+                message_id=msg_id if cb_data.endswith(":refresh") else None,
+            )
+
+        if cb_data in ("admin:users", "admin:users:refresh"):
+            from app.telegram.client_bot.admin.users import handle_users_command
+            return await handle_users_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+                bypass_cache=cb_data.endswith(":refresh"),
+                message_id=msg_id if cb_data.endswith(":refresh") else None,
+            )
+
+        if cb_data in ("admin:broadcasts", "admin:broadcasts:refresh"):
+            from app.telegram.client_bot.admin.broadcasts import handle_broadcasts_command
+            return await handle_broadcasts_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+                session=session,
+                bypass_cache=cb_data.endswith(":refresh"),
+                message_id=msg_id if cb_data.endswith(":refresh") else None,
             )
 
         responses = {
-            "admin:stats": "📊 Send /stats to view full performance analytics.",
-            "admin:users": "👥 Send /users to view audience growth.",
-            "admin:broadcasts": "📢 Send /broadcasts to create and launch broadcasts.",
             "admin:sponsor": "🔓 Send /sponsor to manage Unlockify monetization settings.",
             "admin:messages": "💬 Send /startmessage or /defaultmessage to customize greetings.",
         }

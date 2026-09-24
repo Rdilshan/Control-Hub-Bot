@@ -18,6 +18,8 @@ from app.repositories.viewer_catchup import ViewerCatchupRepository
 from app.repositories.video_delivery import VideoDeliveryRepository
 from app.repositories.job import BackgroundJobRepository
 from app.repositories.event import BotEventRepository
+from app.repositories.client_bot_stats import ClientBotStatsRepository
+from app.repositories.platform_stats import PlatformStatsRepository
 
 __all__ = [
     "BaseRepository",
@@ -38,4 +40,6 @@ __all__ = [
     "VideoDeliveryRepository",
     "BackgroundJobRepository",
     "BotEventRepository",
+    "ClientBotStatsRepository",
+    "PlatformStatsRepository",
 ]

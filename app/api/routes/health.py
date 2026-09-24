@@ -13,7 +13,8 @@ async def liveness_check():
     return {"status": "ok"}
 
 
-@router.get("/health/ready")
+@router.get("/health/ready", status_code=status.HTTP_200_OK)
+@router.get("/ready", status_code=status.HTTP_200_OK)
 async def readiness_check(response: Response):
     """Readiness probe to check if PostgreSQL and Redis dependencies are accessible."""
     db_ok = await check_db_health()
