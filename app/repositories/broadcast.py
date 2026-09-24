@@ -74,13 +74,31 @@ class BroadcastRepository(BaseRepository[Broadcast]):
             await self.session.flush()
         return broadcast
 
-    async def update_counts(
+    async def set_snapshot(
+        self,
+        broadcast_id: int,
+        total_targets: int,
+        audience_max_viewer_id: int,
+    ) -> Optional[Broadcast]:
+        """Saves initial audience snapshot metadata when broadcast starts."""
+        stmt = select(Broadcast).where(Broadcast.id == broadcast_id)
+        result = await self.session.execute(stmt)
+        broadcast = result.scalar_one_or_none()
+        if broadcast:
+            broadcast.total_targets = total_targets
+            broadcast.audience_max_viewer_id = audience_max_viewer_id
+            await self.session.flush()
+        return broadcast
+
+    async def update_progress_and_cursor(
         self,
         broadcast_id: int,
         sent_delta: int = 0,
         failed_delta: int = 0,
         blocked_delta: int = 0,
+        last_processed_viewer_id: Optional[int] = None,
     ) -> Optional[Broadcast]:
+        """Updates counts and last processed viewer id cursor."""
         stmt = select(Broadcast).where(Broadcast.id == broadcast_id)
         result = await self.session.execute(stmt)
         broadcast = result.scalar_one_or_none()
@@ -88,8 +106,10 @@ class BroadcastRepository(BaseRepository[Broadcast]):
             broadcast.sent_count += sent_delta
             broadcast.failed_count += failed_delta
             broadcast.blocked_count += blocked_delta
-            
-            # Auto-complete if all processed
+            if last_processed_viewer_id is not None:
+                broadcast.last_processed_viewer_id = last_processed_viewer_id
+
+            # Check if all completed
             processed = broadcast.sent_count + broadcast.failed_count + broadcast.blocked_count
             if processed >= broadcast.total_targets and broadcast.total_targets > 0:
                 broadcast.status = (
@@ -98,6 +118,80 @@ class BroadcastRepository(BaseRepository[Broadcast]):
                 broadcast.completed_at = utc_now()
             await self.session.flush()
         return broadcast
+
+    async def mark_completed(self, broadcast_id: int) -> Optional[Broadcast]:
+        """Marks broadcast as COMPLETED or PARTIAL if there were errors."""
+        stmt = select(Broadcast).where(Broadcast.id == broadcast_id)
+        result = await self.session.execute(stmt)
+        broadcast = result.scalar_one_or_none()
+        if broadcast:
+            broadcast.status = (
+                BroadcastStatus.COMPLETED if broadcast.failed_count == 0 else BroadcastStatus.PARTIAL
+            )
+            broadcast.completed_at = utc_now()
+            await self.session.flush()
+        return broadcast
+
+    async def mark_failed(
+        self,
+        broadcast_id: int,
+        error_code: str,
+        error_message: str,
+    ) -> Optional[Broadcast]:
+        """Marks broadcast as FAILED with error details."""
+        stmt = select(Broadcast).where(Broadcast.id == broadcast_id)
+        result = await self.session.execute(stmt)
+        broadcast = result.scalar_one_or_none()
+        if broadcast:
+            broadcast.status = BroadcastStatus.FAILED
+            broadcast.last_error_code = error_code
+            broadcast.last_error_message = error_message
+            broadcast.completed_at = utc_now()
+            await self.session.flush()
+        return broadcast
+
+    async def mark_paused(self, broadcast_id: int) -> Optional[Broadcast]:
+        """Marks broadcast as PAUSED."""
+        stmt = select(Broadcast).where(Broadcast.id == broadcast_id)
+        result = await self.session.execute(stmt)
+        broadcast = result.scalar_one_or_none()
+        if broadcast:
+            broadcast.status = BroadcastStatus.PAUSED
+            await self.session.flush()
+        return broadcast
+
+    async def get_active_live_broadcast_for_bot(self, client_bot_id: int) -> Optional[Broadcast]:
+        """Returns currently running live broadcast for a client bot, if any."""
+        stmt = (
+            select(Broadcast)
+            .where(
+                Broadcast.client_bot_id == client_bot_id,
+                Broadcast.broadcast_type == "LIVE",
+                Broadcast.status == BroadcastStatus.RUNNING,
+            )
+            .order_by(Broadcast.created_at.asc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_oldest_queued_live_broadcast(
+        self, client_bot_id: Optional[int] = None
+    ) -> Optional[Broadcast]:
+        """Returns oldest queued LIVE broadcast (optionally for a specific bot)."""
+        stmt = (
+            select(Broadcast)
+            .where(
+                Broadcast.broadcast_type == "LIVE",
+                Broadcast.status.in_([BroadcastStatus.PENDING, BroadcastStatus.QUEUED]),
+            )
+        )
+        if client_bot_id is not None:
+            stmt = stmt.where(Broadcast.client_bot_id == client_bot_id)
+
+        stmt = stmt.order_by(Broadcast.created_at.asc()).limit(1)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def list_by_bot(
         self,

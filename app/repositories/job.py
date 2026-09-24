@@ -95,6 +95,21 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
             queue_name=queue_name,
         )
 
+    async def get_pending_jobs(
+        self,
+        job_type: Optional[JobType] = None,
+        limit: int = 10,
+    ) -> List[BackgroundJob]:
+        """Fetches pending or retrying jobs ready for execution."""
+        stmt = select(BackgroundJob).where(
+            BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.RETRYING])
+        )
+        if job_type is not None:
+            stmt = stmt.where(BackgroundJob.job_type == job_type)
+        stmt = stmt.order_by(BackgroundJob.scheduled_at.asc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_active_for_video(self, video_id: int) -> Optional[BackgroundJob]:
         """Gets active background job (PENDING, QUEUED, RUNNING, RETRYING) for a video."""
         stmt = (

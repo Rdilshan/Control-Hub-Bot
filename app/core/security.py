@@ -43,6 +43,9 @@ def decrypt_token(encrypted_token: Optional[str]) -> Optional[str]:
     return decrypted_bytes.decode("utf-8")
 
 
+decrypt_bot_token = decrypt_token
+
+
 def mask_secret(secret: Optional[str], visible_prefix: int = 4, visible_suffix: int = 4) -> str:
     """Masks a secret string, leaving only optional prefix/suffix characters visible.
     

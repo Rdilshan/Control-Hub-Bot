@@ -72,6 +72,81 @@ class BroadcastDeliveryRepository(BaseRepository[BroadcastDelivery]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_deliveries_for_viewers(
+        self,
+        broadcast_id: int,
+        viewer_ids: List[int],
+    ) -> dict[int, BroadcastDelivery]:
+        """Returns a dict mapping viewer_id -> BroadcastDelivery for the given viewer IDs."""
+        if not viewer_ids:
+            return {}
+        stmt = select(BroadcastDelivery).where(
+            BroadcastDelivery.broadcast_id == broadcast_id,
+            BroadcastDelivery.viewer_id.in_(viewer_ids),
+        )
+        result = await self.session.execute(stmt)
+        deliveries = result.scalars().all()
+        return {d.viewer_id: d for d in deliveries}
+
+    async def record_delivery(
+        self,
+        broadcast_id: int,
+        viewer_id: int,
+        status: DeliveryStatus,
+        telegram_message_id: Optional[int] = None,
+        error_code: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> BroadcastDelivery:
+        """Creates or updates a delivery record for a viewer."""
+        delivery = await self.get_by_broadcast_and_viewer(broadcast_id, viewer_id)
+        now = utc_now()
+        if delivery:
+            delivery.status = status
+            delivery.attempt_count += 1
+            if telegram_message_id is not None:
+                delivery.telegram_message_id = telegram_message_id
+            if status == DeliveryStatus.SENT:
+                delivery.sent_at = now
+                delivery.last_error_code = None
+                delivery.last_error_message = None
+            else:
+                delivery.last_error_code = error_code
+                delivery.last_error_message = error_message
+        else:
+            delivery = BroadcastDelivery(
+                broadcast_id=broadcast_id,
+                viewer_id=viewer_id,
+                status=status,
+                attempt_count=1,
+                telegram_message_id=telegram_message_id,
+                last_error_code=error_code,
+                last_error_message=error_message,
+                sent_at=now if status == DeliveryStatus.SENT else None,
+            )
+            self.session.add(delivery)
+        await self.session.flush()
+        return delivery
+
+    async def get_retryable_failed_deliveries(
+        self,
+        broadcast_id: int,
+        max_attempts: int = 3,
+        limit: int = 100,
+    ) -> List[BroadcastDelivery]:
+        """Fetches failed deliveries that have not exceeded max retry attempts."""
+        stmt = (
+            select(BroadcastDelivery)
+            .where(
+                BroadcastDelivery.broadcast_id == broadcast_id,
+                BroadcastDelivery.status == DeliveryStatus.FAILED,
+                BroadcastDelivery.attempt_count < max_attempts,
+            )
+            .order_by(BroadcastDelivery.id.asc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def mark_sent(
         self,
         delivery_id: int,

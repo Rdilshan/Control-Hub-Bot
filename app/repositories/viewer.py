@@ -110,6 +110,54 @@ class ViewerRepository(BaseRepository[Viewer]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_max_active_viewer_id(self, client_bot_id: int) -> Optional[int]:
+        """Gets maximum viewer ID for active viewers of a client bot."""
+        stmt = (
+            select(func.max(Viewer.id))
+            .where(
+                Viewer.client_bot_id == client_bot_id,
+                Viewer.status == ViewerStatus.ACTIVE,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar()
+
+    async def count_active_viewers_up_to_id(self, client_bot_id: int, max_id: int) -> int:
+        """Counts active viewers up to a maximum viewer ID (snapshot boundary)."""
+        stmt = (
+            select(func.count(Viewer.id))
+            .where(
+                Viewer.client_bot_id == client_bot_id,
+                Viewer.status == ViewerStatus.ACTIVE,
+                Viewer.id <= max_id,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def list_active_viewers_keyset(
+        self,
+        client_bot_id: int,
+        cursor_id: int = 0,
+        max_id: Optional[int] = None,
+        limit: int = 500,
+    ) -> List[Viewer]:
+        """Fetches active viewers using keyset pagination (id > cursor_id)."""
+        stmt = (
+            select(Viewer)
+            .where(
+                Viewer.client_bot_id == client_bot_id,
+                Viewer.status == ViewerStatus.ACTIVE,
+                Viewer.id > cursor_id,
+            )
+        )
+        if max_id is not None:
+            stmt = stmt.where(Viewer.id <= max_id)
+
+        stmt = stmt.order_by(Viewer.id.asc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def count_by_bot(self, client_bot_id: int, status: Optional[ViewerStatus] = None) -> int:
         stmt = select(func.count(Viewer.id)).where(Viewer.client_bot_id == client_bot_id)
         if status:
