@@ -1,11 +1,13 @@
 """Viewer Repository with strict bot isolation."""
 
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import BotEventType, ViewerStatus
 from app.core.utils import utc_now
 from app.db.models.bot_event import BotEvent
+from app.db.models.client_bot import ClientBot
 from app.db.models.viewer import Viewer
 from app.repositories.base import BaseRepository
 
@@ -112,5 +114,24 @@ class ViewerRepository(BaseRepository[Viewer]):
         stmt = select(func.count(Viewer.id)).where(Viewer.client_bot_id == client_bot_id)
         if status:
             stmt = stmt.where(Viewer.status == status)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_platform_total(self) -> int:
+        stmt = select(func.count(Viewer.id))
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_created_since(self, since: datetime) -> int:
+        stmt = select(func.count(Viewer.id)).where(Viewer.created_at >= since)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_by_client(self, client_id: int) -> int:
+        stmt = (
+            select(func.count(Viewer.id))
+            .join(ClientBot, Viewer.client_bot_id == ClientBot.id)
+            .where(ClientBot.client_id == client_id)
+        )
         result = await self.session.execute(stmt)
         return result.scalar() or 0

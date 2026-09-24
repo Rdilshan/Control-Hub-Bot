@@ -1,7 +1,8 @@
 """Client Bot Repository."""
 
-from typing import List, Optional
-from sqlalchemy import func, select
+from datetime import datetime
+from typing import List, Optional, Tuple
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import BotAdminRole, BotEventType, ClientBotStatus
 from app.core.security import decrypt_token, encrypt_token
@@ -169,3 +170,50 @@ class ClientBotRepository(BaseRepository[ClientBot]):
         stmt = select(func.count(ClientBot.id)).where(ClientBot.status == status)
         result = await self.session.execute(stmt)
         return result.scalar() or 0
+
+    async def count_created_since(self, since: datetime) -> int:
+        stmt = select(func.count(ClientBot.id)).where(ClientBot.created_at >= since)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def list_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        status: Optional[ClientBotStatus] = None,
+    ) -> Tuple[List[ClientBot], int]:
+        count_stmt = select(func.count(ClientBot.id))
+        query_stmt = select(ClientBot).order_by(ClientBot.created_at.desc())
+
+        if status:
+            count_stmt = count_stmt.where(ClientBot.status == status)
+            query_stmt = query_stmt.where(ClientBot.status == status)
+
+        total_res = await self.session.execute(count_stmt)
+        total_count = total_res.scalar() or 0
+
+        offset = max(0, (page - 1) * page_size)
+        query_stmt = query_stmt.limit(page_size).offset(offset)
+        result = await self.session.execute(query_stmt)
+        items = list(result.scalars().all())
+
+        return items, total_count
+
+    async def search(self, query: str, limit: int = 20) -> List[ClientBot]:
+        clean_q = query.strip().lstrip("@")
+        if not clean_q:
+            return []
+
+        conditions = [ClientBot.username.ilike(f"%{clean_q}%")]
+        if clean_q.isdigit():
+            conditions.append(ClientBot.id == int(clean_q))
+            conditions.append(ClientBot.telegram_bot_id == int(clean_q))
+
+        stmt = (
+            select(ClientBot)
+            .where(or_(*conditions))
+            .order_by(ClientBot.id.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

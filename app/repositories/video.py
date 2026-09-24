@@ -1,11 +1,13 @@
 """Video Repository with strict bot isolation."""
 
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import BotEventType, ProcessingStatus, VideoStatus
 from app.core.utils import utc_now
 from app.db.models.bot_event import BotEvent
+from app.db.models.client_bot import ClientBot
 from app.db.models.video import Video
 from app.db.models.video_processing import VideoProcessing
 from app.repositories.base import BaseRepository
@@ -130,5 +132,24 @@ class VideoRepository(BaseRepository[Video]):
         stmt = select(func.count(Video.id)).where(Video.client_bot_id == client_bot_id)
         if status:
             stmt = stmt.where(Video.status == status)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_platform_total(self) -> int:
+        stmt = select(func.count(Video.id))
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_created_since(self, since: datetime) -> int:
+        stmt = select(func.count(Video.id)).where(Video.created_at >= since)
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def count_by_client(self, client_id: int) -> int:
+        stmt = (
+            select(func.count(Video.id))
+            .join(ClientBot, Video.client_bot_id == ClientBot.id)
+            .where(ClientBot.client_id == client_id)
+        )
         result = await self.session.execute(stmt)
         return result.scalar() or 0
