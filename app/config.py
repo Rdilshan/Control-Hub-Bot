@@ -1,0 +1,86 @@
+"""Application Configuration Module."""
+
+from typing import Any, Optional
+from functools import lru_cache
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.core.enums import Environment
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # General App Settings
+    APP_NAME: str = "Control Hub"
+    APP_ENV: Environment = Environment.DEVELOPMENT
+    APP_DEBUG: bool = True
+    APP_HOST: str = "0.0.0.0"
+    APP_PORT: int = 8000
+
+    # PostgreSQL Configuration
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/control_hub"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+
+    # Redis Configuration
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Telegram Bot Settings
+    CONTROL_HUB_BOT_TOKEN: Optional[str] = None
+    PLATFORM_OWNER_TELEGRAM_ID: Optional[int] = None
+    BOT_TOKEN_ENCRYPTION_KEY: str = "dGVzdF9mZXJuZXRfa2V5XzMyX2J5dGVzX2xlbmd0aF8xMjM="  # Base64 32-byte key
+    TELEGRAM_API_BASE_URL: str = "https://api.telegram.org"
+    TELEGRAM_REQUEST_TIMEOUT: float = 30.0
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
+
+    # Webhook & Internal Security
+    TELEGRAM_WEBHOOK_BASE_URL: Optional[str] = None
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
+    INTERNAL_API_SECRET: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def empty_str_to_none(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: (None if v == "" else v) for k, v in data.items()}
+        return data
+
+    @model_validator(mode="after")
+    def validate_production_invariants(self) -> "Settings":
+        """Enforces production strictness and security checks."""
+        if self.APP_ENV == Environment.PRODUCTION:
+            if self.APP_DEBUG:
+                raise ValueError("APP_DEBUG cannot be True in production mode.")
+            if not self.CONTROL_HUB_BOT_TOKEN:
+                raise ValueError("CONTROL_HUB_BOT_TOKEN is required in production mode.")
+            if not self.INTERNAL_API_SECRET:
+                raise ValueError("INTERNAL_API_SECRET is required in production mode.")
+            if not self.DATABASE_URL or "localhost" in self.DATABASE_URL:
+                # Basic check - warning or ensure valid db
+                pass
+        return self
+
+    @property
+    def is_development(self) -> bool:
+        return self.APP_ENV == Environment.DEVELOPMENT
+
+    @property
+    def is_testing(self) -> bool:
+        return self.APP_ENV == Environment.TESTING
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV == Environment.PRODUCTION
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Returns cached settings singleton instance."""
+    return Settings()
