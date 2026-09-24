@@ -21,10 +21,12 @@ class ClientBot(Base, IntegerIdMixin, TimestampMixin):
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    public_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)
     token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    webhook_secret_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[ClientBotStatus] = mapped_column(
         String(50),
-        default=ClientBotStatus.ACTIVE,
+        default=ClientBotStatus.PROVISIONING,
         index=True,
         nullable=False,
     )

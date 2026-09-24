@@ -23,6 +23,52 @@ def test_env(monkeypatch):
     get_settings.cache_clear()
 
 
+from unittest.mock import AsyncMock
+
+
+class FakeRedis:
+    """Fast in-memory Redis mock for unit/integration tests."""
+
+    def __init__(self):
+        self._store = {}
+
+    async def get(self, key: str):
+        return self._store.get(key)
+
+    async def set(self, key: str, value, ex=None, **kwargs):
+        self._store[key] = str(value) if not isinstance(value, bytes) else value.decode("utf-8")
+        return True
+
+    async def setex(self, key: str, time, value):
+        self._store[key] = str(value) if not isinstance(value, bytes) else value.decode("utf-8")
+        return True
+
+    async def delete(self, *keys: str):
+        count = 0
+        for k in keys:
+            if k in self._store:
+                del self._store[k]
+                count += 1
+        return count
+
+    async def ping(self):
+        return True
+
+    async def expire(self, key: str, seconds: int):
+        return True
+
+    async def exists(self, *keys: str):
+        return sum(1 for k in keys if k in self._store)
+
+
+@pytest.fixture(autouse=True)
+def mock_redis_globally(monkeypatch):
+    """Mocks Redis client with in-memory store so tests run instantly without socket delays."""
+    fake = FakeRedis()
+    monkeypatch.setattr("app.redis.client.get_redis", lambda: fake)
+    yield fake
+
+
 @pytest_asyncio.fixture
 async def app_client():
     """Provides an AsyncClient bound to the FastAPI application."""

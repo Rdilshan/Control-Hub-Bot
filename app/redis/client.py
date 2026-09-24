@@ -75,6 +75,8 @@ def init_redis(redis_url: Optional[str] = None) -> aioredis.Redis:
         url,
         decode_responses=True,
         max_connections=20,
+        socket_connect_timeout=1.0,
+        socket_timeout=1.0,
     )
     logger.info("Redis client initialized")
     return _redis_client

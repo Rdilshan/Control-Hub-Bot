@@ -171,6 +171,18 @@ class TelegramClient:
 
         return await self.request("editMessageText", json_data=payload)
 
+    async def delete_message(self, chat_id: int | str, message_id: int) -> bool:
+        """Attempts to delete a message from a chat for security/cleanup."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        try:
+            result = await self.request("deleteMessage", json_data=payload)
+            return bool(result)
+        except Exception:
+            return False
+
     async def answer_callback_query(
         self,
         callback_query_id: str,

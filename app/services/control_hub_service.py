@@ -9,6 +9,7 @@ from app.core.enums import (
     JobStatus,
     VideoStatus,
     ViewerStatus,
+    enum_val,
 )
 from app.db.models.client import Client
 from app.db.models.client_bot import ClientBot
@@ -86,7 +87,7 @@ class ControlHubService:
             "telegram_user_id": client.telegram_user_id,
             "username": client.username,
             "first_name": client.first_name,
-            "status": client.status.value,
+            "status": enum_val(client.status),
             "total_bots": len(bots),
             "active_bots": len(active_bots),
             "created_at": client.created_at,

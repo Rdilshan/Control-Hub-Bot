@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import JobStatus, JobType
+from app.core.enums import JobStatus, JobType, enum_val
 from app.core.utils import utc_now
 from app.db.models.background_job import BackgroundJob
 from app.repositories.base import BaseRepository
@@ -90,7 +90,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
             return False, "Job is currently running", job
 
         if job.status not in (JobStatus.FAILED, JobStatus.RETRYING):
-            return False, f"Job cannot be retried from status {job.status.value}", job
+            return False, f"Job cannot be retried from status {enum_val(job.status)}", job
 
         job.status = JobStatus.PENDING
         job.scheduled_at = utc_now()

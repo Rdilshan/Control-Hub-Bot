@@ -27,10 +27,12 @@ class ClientStatus(str, Enum):
 
 
 class ClientBotStatus(str, Enum):
+    PROVISIONING = "PROVISIONING"
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
     DISCONNECTED = "DISCONNECTED"
     INVALID_TOKEN = "INVALID_TOKEN"
+    PROVISION_FAILED = "PROVISION_FAILED"
 
 
 class BotAdminRole(str, Enum):
@@ -92,6 +94,8 @@ class CatchupStatus(str, Enum):
 
 
 class JobType(str, Enum):
+    CLIENT_BOT_PROVISION = "CLIENT_BOT_PROVISION"
+    CLIENT_BOT_DISCONNECT = "CLIENT_BOT_DISCONNECT"
     VIDEO_PROCESS = "VIDEO_PROCESS"
     CREATE_UNLOCK_LINK = "CREATE_UNLOCK_LINK"
     BROADCAST = "BROADCAST"
@@ -110,12 +114,26 @@ class JobStatus(str, Enum):
 
 
 class BotEventType(str, Enum):
+    BOT_CONNECTION_STARTED = "BOT_CONNECTION_STARTED"
     BOT_CONNECTED = "BOT_CONNECTED"
+    BOT_CONNECTION_FAILED = "BOT_CONNECTION_FAILED"
+    BOT_RECONNECTED = "BOT_RECONNECTED"
     BOT_PAUSED = "BOT_PAUSED"
     BOT_RESUMED = "BOT_RESUMED"
     BOT_DISCONNECTED = "BOT_DISCONNECTED"
+    BOT_TOKEN_INVALIDATED = "BOT_TOKEN_INVALIDATED"
     VIEWER_STARTED = "VIEWER_STARTED"
     VIDEO_CREATED = "VIDEO_CREATED"
     VIDEO_READY = "VIDEO_READY"
     BROADCAST_STARTED = "BROADCAST_STARTED"
     BROADCAST_COMPLETED = "BROADCAST_COMPLETED"
+
+
+def enum_val(v: object) -> str:
+    """Safely extracts string representation from either an Enum instance or a string."""
+    if v is None:
+        return ""
+    if hasattr(v, "value"):
+        return str(v.value)
+    return str(v)
+

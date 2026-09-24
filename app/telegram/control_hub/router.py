@@ -1,16 +1,25 @@
-"""Control Hub Update & Command Router with role guards, full Owner management, and navigation."""
+"""Control Hub Update & Command Router with role guards, Owner management, and Client onboarding."""
 
 from typing import Any, Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.enums import (
     BroadcastStatus,
+    ClientBotStatus,
     ClientStatus,
     ControlHubRole,
     JobStatus,
+    enum_val,
 )
 from app.logging_config import get_logger
 from app.redis.client import get_redis
+from app.repositories.client_bot import ClientBotRepository
+from app.services.client_bot_connection_service import ClientBotConnectionService
+from app.services.client_bot_provisioning_service import ClientBotProvisioningService
+from app.services.client_onboarding_service import (
+    ONBOARDING_STATE_PREFIX,
+    ClientOnboardingService,
+)
 from app.services.control_hub_service import ControlHubService
 from app.services.platform_owner_service import PlatformOwnerService
 from app.telegram.client import TelegramClient
@@ -38,14 +47,17 @@ class ControlHubRouter:
         """Main entry point for processing a raw Telegram webhook update."""
         service = ControlHubService(session)
         owner_service = PlatformOwnerService(session)
+        client_service = ClientOnboardingService(session)
 
         # 1. Handle Message Updates
         if "message" in update:
-            return await self._handle_message(update["message"], service, owner_service)
+            return await self._handle_message(update["message"], service, owner_service, client_service)
 
         # 2. Handle Callback Query Updates
         if "callback_query" in update:
-            return await self._handle_callback_query(update["callback_query"], service, owner_service)
+            return await self._handle_callback_query(
+                update["callback_query"], service, owner_service, client_service
+            )
 
         logger.debug(f"Unhandled update type: {list(update.keys())}")
         return {"ok": True, "action": "ignored"}
@@ -55,6 +67,7 @@ class ControlHubRouter:
         msg: Dict[str, Any],
         service: ControlHubService,
         owner_service: PlatformOwnerService,
+        client_service: ClientOnboardingService,
     ) -> Dict[str, Any]:
         chat = msg.get("chat", {})
         chat_id = chat.get("id")
@@ -80,21 +93,22 @@ class ControlHubRouter:
 
         # Check for /cancel command
         if text.lower() in ("/cancel", "cancel"):
-            try:
-                redis = get_redis()
-                await redis.delete(f"{SEARCH_STATE_PREFIX}{user_id}")
-            except Exception:
-                pass
             if is_owner:
+                try:
+                    redis = get_redis()
+                    await redis.delete(f"{SEARCH_STATE_PREFIX}{user_id}")
+                except Exception:
+                    pass
                 await self.telegram_client.send_message(
                     chat_id=chat_id,
                     text="❌ Search cancelled.",
                     reply_markup=keyboards.back_to_owner_home_keyboard(),
                 )
             else:
+                await client_service.clear_onboarding_state(user_id)
                 await self.telegram_client.send_message(
                     chat_id=chat_id,
-                    text="❌ Action cancelled.",
+                    text=messages.connection_cancelled_message(),
                     reply_markup=keyboards.back_to_client_home_keyboard(),
                 )
             return {"ok": True, "action": "cancelled"}
@@ -113,13 +127,118 @@ class ControlHubRouter:
             except Exception as exc:
                 logger.warning(f"Redis search state check error: {exc}")
 
+        # Check Client Onboarding / Token Intake State in Redis
+        if not is_owner and not text.startswith("/"):
+            onboarding_state = await client_service.get_onboarding_state(user_id)
+            if onboarding_state and (
+                onboarding_state == "WAITING_FOR_BOT_TOKEN"
+                or onboarding_state.startswith("WAITING_FOR_RECONNECT_TOKEN")
+            ):
+                if not guards.is_private_chat(chat_type):
+                    await self.telegram_client.send_message(
+                        chat_id=chat_id,
+                        text=messages.private_chat_only_message(),
+                    )
+                    return {"ok": True, "action": "non_private_token_rejected"}
+
+                # Attempt to delete token message from chat for privacy
+                message_id = msg.get("message_id")
+                if message_id and hasattr(self.telegram_client, "delete_message"):
+                    try:
+                        await self.telegram_client.delete_message(chat_id=chat_id, message_id=message_id)
+                    except Exception:
+                        pass
+
+                client, _ = await client_service.resolve_or_create_client(
+                    telegram_user_id=user_id,
+                    username=from_user.get("username"),
+                    first_name=from_user.get("first_name"),
+                    last_name=from_user.get("last_name"),
+                )
+
+                conn_service = ClientBotConnectionService(service.session)
+                is_valid, bot_info, err_msg, is_net_err = await conn_service.validate_token(
+                    raw_token=text,
+                    http_client=getattr(self.telegram_client, "_client", None),
+                )
+
+                if not is_valid:
+                    if is_net_err:
+                        await self.telegram_client.send_message(
+                            chat_id=chat_id,
+                            text=messages.client_bot_telegram_unreachable_message(),
+                            reply_markup=keyboards.token_prompt_keyboard(),
+                        )
+                    else:
+                        await self.telegram_client.send_message(
+                            chat_id=chat_id,
+                            text=messages.client_bot_invalid_token_error_message(),
+                            reply_markup=keyboards.token_prompt_keyboard(),
+                        )
+                    return {"ok": True, "action": "invalid_bot_token"}
+
+                reconnect_bot_id = None
+                if onboarding_state.startswith("WAITING_FOR_RECONNECT_TOKEN:"):
+                    reconnect_bot_id = int(onboarding_state.split(":")[-1])
+                    existing_detail = await client_service.get_bot_for_client(reconnect_bot_id, client.id)
+                    if existing_detail and existing_detail["bot"].telegram_bot_id != bot_info.id:
+                        await self.telegram_client.send_message(
+                            chat_id=chat_id,
+                            text=messages.client_bot_reconnect_wrong_bot_message(existing_detail["bot"].username),
+                            reply_markup=keyboards.token_prompt_keyboard(),
+                        )
+                        return {"ok": True, "action": "reconnect_wrong_bot"}
+                else:
+                    status_type, existing_bot = await conn_service.check_bot_ownership(
+                        telegram_bot_id=bot_info.id,
+                        client_id=client.id,
+                    )
+                    if status_type == "ALREADY_CONNECTED" and existing_bot:
+                        await client_service.clear_onboarding_state(user_id)
+                        await self.telegram_client.send_message(
+                            chat_id=chat_id,
+                            text=messages.client_bot_already_connected_message(existing_bot.username),
+                            reply_markup=keyboards.client_bot_detail_keyboard(
+                                existing_bot.id, existing_bot.username, enum_val(existing_bot.status)
+                            ),
+                        )
+                        return {"ok": True, "action": "bot_already_connected"}
+                    elif status_type == "OTHER_OWNER":
+                        await client_service.clear_onboarding_state(user_id)
+                        await self.telegram_client.send_message(
+                            chat_id=chat_id,
+                            text=messages.client_bot_already_owned_by_other_message(),
+                            reply_markup=keyboards.back_to_client_home_keyboard(),
+                        )
+                        return {"ok": True, "action": "bot_owned_by_other"}
+                    elif status_type == "RECONNECT" and existing_bot:
+                        reconnect_bot_id = existing_bot.id
+
+                temp_id = await conn_service.prepare_pending_connection(
+                    client_id=client.id,
+                    raw_token=text,
+                    bot_info=bot_info,
+                    reconnect_bot_id=reconnect_bot_id,
+                )
+                await client_service.clear_onboarding_state(user_id)
+
+                await self.telegram_client.send_message(
+                    chat_id=chat_id,
+                    text=messages.client_bot_found_confirm_message(
+                        name=bot_info.first_name,
+                        username=bot_info.username,
+                    ),
+                    reply_markup=keyboards.client_connect_confirm_keyboard(temp_id),
+                )
+                return {"ok": True, "action": "bot_found_confirm"}
+
         # Command Dispatcher
         if text.startswith("/"):
             parts = text.split(maxsplit=1)
             command = parts[0].lower().split("@")[0]
             args = parts[1] if len(parts) > 1 else None
             return await self._dispatch_command(
-                command, args, chat_id, user_id, from_user, is_owner, service, owner_service
+                command, args, chat_id, user_id, from_user, is_owner, service, owner_service, client_service
             )
 
         # Non-command Text Handling
@@ -142,6 +261,7 @@ class ControlHubRouter:
         is_owner: bool,
         service: ControlHubService,
         owner_service: PlatformOwnerService,
+        client_service: ClientOnboardingService,
     ) -> Dict[str, Any]:
         username = from_user.get("username")
         first_name = from_user.get("first_name")
@@ -157,15 +277,18 @@ class ControlHubRouter:
                 )
                 return {"ok": True, "action": "owner_home"}
 
-            # Client or New Client
-            client, is_new = await service.get_or_create_client(
+            # Reset temporary onboarding state on /start
+            await client_service.clear_onboarding_state(user_id)
+
+            # Client Resolution & Profile Sync
+            client, is_new = await client_service.resolve_or_create_client(
                 telegram_user_id=user_id,
                 username=username,
                 first_name=first_name,
                 last_name=last_name,
             )
 
-            # Suspended Client Guard
+            # Suspended / Disabled Client Guards
             if client.status == ClientStatus.SUSPENDED:
                 await self.telegram_client.send_message(
                     chat_id=chat_id,
@@ -173,7 +296,14 @@ class ControlHubRouter:
                 )
                 return {"ok": True, "action": "client_suspended"}
 
-            bots = await service.list_client_bots(client.id)
+            if client.status == ClientStatus.DISABLED:
+                await self.telegram_client.send_message(
+                    chat_id=chat_id,
+                    text=messages.client_disabled_message(),
+                )
+                return {"ok": True, "action": "client_disabled"}
+
+            bots = await client_service.list_client_bots(client.id)
 
             if is_new or len(bots) == 0:
                 await self.telegram_client.send_message(
@@ -210,56 +340,119 @@ class ControlHubRouter:
             return await self._handle_owner_command_view(command, chat_id, owner_service)
 
         # --- Client Commands ---
-        client = await service.get_client_by_telegram_id(user_id)
-        if client and client.status == ClientStatus.SUSPENDED:
+        client, _ = await client_service.resolve_or_create_client(
+            telegram_user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+        )
+
+        if client.status == ClientStatus.SUSPENDED:
             await self.telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.client_suspended_message(),
             )
             return {"ok": True, "action": "client_suspended"}
 
-        if command == "/connectbot":
+        if client.status == ClientStatus.DISABLED:
             await self.telegram_client.send_message(
                 chat_id=chat_id,
-                text=messages.client_connectbot_entry_message(),
-                reply_markup=keyboards.connectbot_entry_keyboard(),
+                text=messages.client_disabled_message(),
+            )
+            return {"ok": True, "action": "client_disabled"}
+
+        if command == "/connectbot":
+            await client_service.set_onboarding_state(user_id, "PREPARING_TO_CONNECT_BOT")
+            await self.telegram_client.send_message(
+                chat_id=chat_id,
+                text=messages.botfather_guide_message(),
+                reply_markup=keyboards.botfather_guide_keyboard(),
             )
             return {"ok": True, "action": "client_connectbot"}
 
         if command == "/mybots":
-            bots = await service.list_client_bots(client.id) if client else []
+            bots = await client_service.list_client_bots(client.id)
             await self.telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.client_mybots_message(bots),
-                reply_markup=keyboards.mybots_keyboard(),
+                reply_markup=keyboards.client_mybots_keyboard(bots),
             )
             return {"ok": True, "action": "client_mybots"}
 
+        if command == "/botstatus":
+            bots = await client_service.list_client_bots(client.id)
+            if not bots:
+                await self.telegram_client.send_message(
+                    chat_id=chat_id,
+                    text=messages.client_mybots_message([]),
+                    reply_markup=keyboards.client_home_zero_bots_keyboard(),
+                )
+                return {"ok": True, "action": "client_botstatus_no_bots"}
+
+            if len(bots) == 1:
+                detail = await client_service.get_bot_for_client(bots[0].id, client.id)
+                if detail:
+                    await self.telegram_client.send_message(
+                        chat_id=chat_id,
+                        text=messages.client_bot_detail_message(detail),
+                        reply_markup=keyboards.client_bot_detail_keyboard(bots[0].id, bots[0].username),
+                    )
+                    return {"ok": True, "action": "client_botstatus_single"}
+
+            await self.telegram_client.send_message(
+                chat_id=chat_id,
+                text="🤖 <b>Select a bot to view status:</b>",
+                reply_markup=keyboards.client_mybots_keyboard(bots),
+            )
+            return {"ok": True, "action": "client_botstatus_multi"}
+
+        if command == "/disconnectbot":
+            bots = await client_service.list_client_bots(client.id)
+            if not bots:
+                await self.telegram_client.send_message(
+                    chat_id=chat_id,
+                    text="You do not have any connected bots to disconnect.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_disconnectbot_no_bots"}
+
+            if len(bots) == 1:
+                bot_handle = f"@{bots[0].username}" if bots[0].username else f"Bot #{bots[0].telegram_bot_id}"
+                await self.telegram_client.send_message(
+                    chat_id=chat_id,
+                    text=messages.client_disconnect_confirm_message(bot_handle),
+                    reply_markup=keyboards.client_disconnect_confirm_keyboard(bots[0].id),
+                )
+                return {"ok": True, "action": "client_disconnectbot_single"}
+
+            await self.telegram_client.send_message(
+                chat_id=chat_id,
+                text="🤖 <b>Select a bot to disconnect:</b>",
+                reply_markup=keyboards.client_mybots_keyboard(bots),
+            )
+            return {"ok": True, "action": "client_disconnectbot_multi"}
+
         if command == "/account":
-            if not client:
-                client, _ = await service.get_or_create_client(user_id, username, first_name, last_name)
-            summary = await service.get_client_account_summary(client.id)
+            summary = await client_service.get_client_account_summary(client.id)
             await self.telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.client_account_message(
                     username=summary.get("username"),
                     bot_count=summary.get("total_bots", 0),
                     status=summary.get("status", "ACTIVE"),
+                    joined_at=summary.get("created_at"),
                 ),
                 reply_markup=keyboards.back_to_client_home_keyboard(),
             )
             return {"ok": True, "action": "client_account"}
 
-        if command in ("/botstatus", "/disconnectbot"):
-            await self.telegram_client.send_message(
-                chat_id=chat_id,
-                text="🤖 Use /mybots to select a bot and manage its status or disconnection.",
-                reply_markup=keyboards.mybots_keyboard(),
-            )
-            return {"ok": True, "action": "client_bot_management_info"}
-
         if command == "/help":
-            help_text = messages.owner_help_message() if is_owner else messages.client_help_message()
+            bots = await client_service.list_client_bots(client.id)
+            help_text = (
+                messages.owner_help_message()
+                if is_owner
+                else messages.client_help_message(has_bots=len(bots) > 0)
+            )
             markup = (
                 keyboards.back_to_owner_home_keyboard()
                 if is_owner
@@ -280,7 +473,7 @@ class ControlHubRouter:
         return {"ok": True, "action": "unknown_command"}
 
     # ==========================================================================
-    # 👑 Platform Owner Views & Callbacks
+    # 👑 Platform Owner Views
     # ==========================================================================
 
     async def _handle_owner_command_view(
@@ -376,6 +569,7 @@ class ControlHubRouter:
         cq: Dict[str, Any],
         service: ControlHubService,
         owner_service: PlatformOwnerService,
+        client_service: ClientOnboardingService,
     ) -> Dict[str, Any]:
         cq_id = cq.get("id")
         from_user = cq.get("from", {})
@@ -410,8 +604,14 @@ class ControlHubRouter:
             return await self._process_owner_callback(data, chat_id, message_id, user_id, owner_service)
 
         # --- Client Callbacks ---
-        client = await service.get_client_by_telegram_id(user_id)
-        if client and client.status == ClientStatus.SUSPENDED:
+        client, _ = await client_service.resolve_or_create_client(
+            telegram_user_id=user_id,
+            username=from_user.get("username"),
+            first_name=from_user.get("first_name"),
+            last_name=from_user.get("last_name"),
+        )
+
+        if client.status == ClientStatus.SUSPENDED:
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -419,31 +619,273 @@ class ControlHubRouter:
             )
             return {"ok": True, "action": "client_suspended"}
 
+        if client.status == ClientStatus.DISABLED:
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_disabled_message(),
+            )
+            return {"ok": True, "action": "client_disabled"}
+
+        if data == "client:how_it_works":
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.how_it_works_message(),
+                reply_markup=keyboards.how_it_works_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_how_it_works"}
+
+        if data in ("client:connectbot", "client:connectbot_start"):
+            await client_service.set_onboarding_state(user_id, "PREPARING_TO_CONNECT_BOT")
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.botfather_guide_message(),
+                reply_markup=keyboards.botfather_guide_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_connectbot"}
+
+        if data == "client:connect:token_ready":
+            await client_service.set_onboarding_state(user_id, "WAITING_FOR_BOT_TOKEN")
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.connectbot_token_prompt_message(),
+                reply_markup=keyboards.token_prompt_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_token_prompt"}
+
+        if data == "client:cancel":
+            await client_service.clear_onboarding_state(user_id)
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.connection_cancelled_message(),
+                reply_markup=keyboards.back_to_client_home_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_cancelled"}
+
         if data == "client:mybots":
-            bots = await service.list_client_bots(client.id) if client else []
+            bots = await client_service.list_client_bots(client.id)
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=messages.client_mybots_message(bots),
-                reply_markup=keyboards.mybots_keyboard(),
+                reply_markup=keyboards.client_mybots_keyboard(bots),
             )
             return {"ok": True, "action": "cb_client_mybots"}
 
-        if data in ("client:connectbot", "client:connectbot_start"):
+        if data.startswith("client:connect:confirm:"):
+            temp_id = data.split(":")[-1]
+            conn_service = ClientBotConnectionService(service.session)
+            
+            # Show connecting state
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text=messages.client_connectbot_entry_message(),
-                reply_markup=keyboards.connectbot_entry_keyboard(),
+                text=messages.client_bot_connecting_message(None),
             )
-            return {"ok": True, "action": "cb_client_connectbot"}
+
+            success, msg, bot = await conn_service.confirm_connection(
+                client_id=client.id,
+                temp_id=temp_id,
+                http_client=getattr(self.telegram_client, "_client", None),
+            )
+
+            if success and bot:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=messages.client_bot_connected_success_message(bot.username),
+                    reply_markup=keyboards.client_bot_detail_keyboard(
+                        bot.id, bot.username, status=enum_val(bot.status)
+                    ),
+                )
+                return {"ok": True, "action": "cb_client_bot_connected_success"}
+            else:
+                bot_id = bot.id if bot else 0
+                bot_username = bot.username if bot else None
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=messages.client_bot_provision_failed_message(bot_username),
+                    reply_markup=keyboards.client_bot_detail_keyboard(
+                        bot_id, bot_username, status="PROVISION_FAILED"
+                    ),
+                )
+                return {"ok": True, "action": "cb_client_bot_provision_failed"}
+
+        if data == "client:connect:cancel":
+            await client_service.clear_onboarding_state(user_id)
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.connection_cancelled_message(),
+                reply_markup=keyboards.back_to_client_home_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_connect_cancelled"}
+
+        if data.startswith("client:connect:retry:"):
+            bot_id = int(data.split(":")[-1])
+            conn_service = ClientBotConnectionService(service.session)
+
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_bot_connecting_message(None),
+            )
+
+            success, msg = await conn_service.retry_provisioning(
+                client_bot_id=bot_id,
+                client_id=client.id,
+                http_client=getattr(self.telegram_client, "_client", None),
+            )
+
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            bot_username = detail["bot"].username if detail else None
+
+            if success:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=messages.client_bot_connected_success_message(bot_username),
+                    reply_markup=keyboards.client_bot_detail_keyboard(
+                        bot_id, bot_username, status="ACTIVE"
+                    ),
+                )
+                return {"ok": True, "action": "cb_client_retry_success"}
+            else:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=messages.client_bot_provision_failed_message(bot_username),
+                    reply_markup=keyboards.client_bot_detail_keyboard(
+                        bot_id, bot_username, status="PROVISION_FAILED"
+                    ),
+                )
+                return {"ok": True, "action": "cb_client_retry_failed"}
+
+        if data.startswith("client:bot:reconnect:"):
+            bot_id = int(data.split(":")[-1])
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            if not detail:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="⚠️ Bot not found.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_bot_not_found"}
+
+            await client_service.set_onboarding_state(user_id, f"WAITING_FOR_RECONNECT_TOKEN:{bot_id}")
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.connectbot_token_prompt_message(),
+                reply_markup=keyboards.token_prompt_keyboard(),
+            )
+            return {"ok": True, "action": "cb_client_reconnect_prompt"}
+
+        if data.startswith("client:bot:refresh:"):
+            bot_id = int(data.split(":")[-1])
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            if not detail:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="⚠️ Bot not found.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_bot_not_found"}
+
+            bot = detail["bot"]
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_bot_detail_message(detail),
+                reply_markup=keyboards.client_bot_detail_keyboard(
+                    bot.id, bot.username, status=enum_val(bot.status)
+                ),
+            )
+            return {"ok": True, "action": "cb_client_bot_refresh"}
+
+        if data.startswith("client:bot:view:"):
+            bot_id = int(data.split(":")[-1])
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            if not detail:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="⚠️ Bot not found.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_bot_not_found"}
+
+            bot = detail["bot"]
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_bot_detail_message(detail),
+                reply_markup=keyboards.client_bot_detail_keyboard(
+                    bot.id, bot.username, status=enum_val(bot.status)
+                ),
+            )
+            return {"ok": True, "action": "cb_client_bot_view"}
+
+        if data.startswith("client:bot:disconnect:"):
+            bot_id = int(data.split(":")[-1])
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            if not detail:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="⚠️ Bot not found.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_bot_not_found"}
+
+            bot = detail["bot"]
+            bot_handle = f"@{bot.username}" if bot.username else f"Bot #{bot.telegram_bot_id}"
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_disconnect_confirm_message(bot_handle),
+                reply_markup=keyboards.client_disconnect_confirm_keyboard(bot.id),
+            )
+            return {"ok": True, "action": "cb_client_bot_disconnect_prompt"}
+
+        if data.startswith("client:bot:disconnect_confirm:"):
+            bot_id = int(data.split(":")[-1])
+            prov_service = ClientBotProvisioningService(service.session)
+            detail = await client_service.get_bot_for_client(bot_id, client.id)
+            if not detail:
+                await self.telegram_client.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="⚠️ Bot not found.",
+                    reply_markup=keyboards.back_to_client_home_keyboard(),
+                )
+                return {"ok": True, "action": "client_bot_not_found"}
+
+            success, msg = await prov_service.disconnect_bot(
+                client_bot_id=bot_id,
+                client_id=client.id,
+                http_client=getattr(self.telegram_client, "_client", None),
+            )
+            bot_handle = f"@{detail['bot'].username}" if detail['bot'].username else f"Bot #{bot_id}"
+            await self.telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=messages.client_disconnect_executed_message(bot_handle),
+                reply_markup=keyboards.client_bot_detail_keyboard(
+                    bot_id, detail["bot"].username, status="DISCONNECTED"
+                ),
+            )
+            return {"ok": True, "action": "cb_client_bot_disconnected"}
 
         if data == "client:account":
-            if not client:
-                client, _ = await service.get_or_create_client(
-                    user_id, from_user.get("username"), from_user.get("first_name"), from_user.get("last_name")
-                )
-            summary = await service.get_client_account_summary(client.id)
+            summary = await client_service.get_client_account_summary(client.id)
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -451,16 +893,18 @@ class ControlHubRouter:
                     username=summary.get("username"),
                     bot_count=summary.get("total_bots", 0),
                     status=summary.get("status", "ACTIVE"),
+                    joined_at=summary.get("created_at"),
                 ),
                 reply_markup=keyboards.back_to_client_home_keyboard(),
             )
             return {"ok": True, "action": "cb_client_account"}
 
         if data == "client:help":
+            bots = await client_service.list_client_bots(client.id)
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text=messages.client_help_message(),
+                text=messages.client_help_message(has_bots=len(bots) > 0),
                 reply_markup=keyboards.back_to_client_home_keyboard(),
             )
             return {"ok": True, "action": "cb_client_help"}
@@ -477,14 +921,19 @@ class ControlHubRouter:
             return {"ok": True, "action": "cb_nav_owner_home"}
 
         if data == "nav:client_home":
-            bot_count = len(await service.list_client_bots(client.id)) if client else 0
+            bots = await client_service.list_client_bots(client.id)
+            markup = (
+                keyboards.client_home_zero_bots_keyboard()
+                if len(bots) == 0
+                else keyboards.client_home_keyboard()
+            )
             await self.telegram_client.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=messages.client_home_message(
-                    username=from_user.get("username"), bot_count=bot_count
+                    username=from_user.get("username"), bot_count=len(bots)
                 ),
-                reply_markup=keyboards.client_home_keyboard(),
+                reply_markup=markup,
             )
             return {"ok": True, "action": "cb_nav_client_home"}
 
