@@ -8,11 +8,14 @@ from app.services.catchup_delivery_service import CatchupDeliveryService
 from app.services.catchup_scheduler_service import CatchupSchedulerService
 from app.services.catchup_service import CatchupService
 from app.services.catchup_video_selector_service import CatchupVideoSelectorService
+from app.services.client_account_bot_summary_service import ClientAccountBotSummaryService
 from app.services.client_bot_connection_service import ClientBotConnectionService
 from app.services.client_bot_health_service import ClientBotHealthService
 from app.services.client_bot_lifecycle_service import ClientBotLifecycleService
+from app.services.client_bot_management_service import ClientBotManagementService
 from app.services.client_bot_provisioning_service import ClientBotProvisioningService
 from app.services.client_bot_reconnect_service import ClientBotReconnectService
+from app.services.client_bot_selector_service import ClientBotSelectorService
 from app.services.client_bot_sponsor_service import ClientBotSponsorService
 from app.services.client_onboarding_service import ClientOnboardingService
 from app.services.control_hub_service import ControlHubService
@@ -44,11 +47,14 @@ __all__ = [
     "CatchupSchedulerService",
     "CatchupService",
     "CatchupVideoSelectorService",
+    "ClientAccountBotSummaryService",
     "ClientBotConnectionService",
     "ClientBotHealthService",
     "ClientBotLifecycleService",
+    "ClientBotManagementService",
     "ClientBotProvisioningService",
     "ClientBotReconnectService",
+    "ClientBotSelectorService",
     "ClientBotSponsorService",
     "ClientOnboardingService",
     "ControlHubService",

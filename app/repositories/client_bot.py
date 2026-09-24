@@ -1,7 +1,7 @@
 """Client Bot Repository."""
 
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import BotAdminRole, BotEventType, ClientBotStatus
@@ -210,6 +210,119 @@ class ClientBotRepository(BaseRepository[ClientBot]):
         items = list(result.scalars().all())
 
         return items, total_count
+
+    async def list_by_client_paginated(
+        self,
+        client_id: int,
+        page: int = 1,
+        page_size: int = 10,
+        status: Optional[ClientBotStatus] = None,
+    ) -> Tuple[List[ClientBot], int]:
+        """Returns paginated bots belonging to a specific client with total count."""
+        count_stmt = select(func.count(ClientBot.id)).where(ClientBot.client_id == client_id)
+        query_stmt = select(ClientBot).where(ClientBot.client_id == client_id).order_by(ClientBot.created_at.asc())
+
+        if status:
+            count_stmt = count_stmt.where(ClientBot.status == status)
+            query_stmt = query_stmt.where(ClientBot.status == status)
+
+        total_res = await self.session.execute(count_stmt)
+        total_count = total_res.scalar() or 0
+
+        offset = max(0, (page - 1) * page_size)
+        query_stmt = query_stmt.limit(page_size).offset(offset)
+        result = await self.session.execute(query_stmt)
+        items = list(result.scalars().all())
+
+        return items, total_count
+
+    async def count_by_client_and_status(self, client_id: int) -> Dict[str, int]:
+        """Returns counts of bots per status for a specific client."""
+        stmt = (
+            select(ClientBot.status, func.count(ClientBot.id))
+            .where(ClientBot.client_id == client_id)
+            .group_by(ClientBot.status)
+        )
+        res = await self.session.execute(stmt)
+        counts = {}
+        total = 0
+        for status, count in res.all():
+            st_str = getattr(status, "value", str(status))
+            counts[st_str] = count
+            total += count
+
+        return {
+            "total": total,
+            "active": counts.get(ClientBotStatus.ACTIVE.value, 0),
+            "paused": counts.get(ClientBotStatus.PAUSED.value, 0),
+            "disconnected": counts.get(ClientBotStatus.DISCONNECTED.value, 0),
+            "invalid_token": counts.get(ClientBotStatus.INVALID_TOKEN.value, 0),
+            "unavailable": counts.get(ClientBotStatus.UNAVAILABLE.value, 0),
+            "needs_attention": (
+                counts.get(ClientBotStatus.INVALID_TOKEN.value, 0)
+                + counts.get(ClientBotStatus.UNAVAILABLE.value, 0)
+                + counts.get(ClientBotStatus.REVOKED.value, 0)
+                + counts.get(ClientBotStatus.PROVISION_FAILED.value, 0)
+            ),
+        }
+
+    async def get_bot_metrics(self, client_bot_id: int) -> Dict[str, int]:
+        """Returns per-bot asset and subscriber metrics."""
+        from app.db.models.broadcast import Broadcast
+        from app.db.models.video import Video
+        from app.db.models.viewer import Viewer
+
+        # Viewers count
+        v_stmt = select(func.count(Viewer.id)).where(Viewer.client_bot_id == client_bot_id)
+        v_res = await self.session.execute(v_stmt)
+        viewers_count = v_res.scalar() or 0
+
+        # Videos count
+        vid_stmt = select(func.count(Video.id)).where(Video.client_bot_id == client_bot_id)
+        vid_res = await self.session.execute(vid_stmt)
+        videos_count = vid_res.scalar() or 0
+
+        # Broadcasts count
+        bc_stmt = select(func.count(Broadcast.id)).where(Broadcast.client_bot_id == client_bot_id)
+        bc_res = await self.session.execute(bc_stmt)
+        broadcasts_count = bc_res.scalar() or 0
+
+        return {
+            "viewers_count": viewers_count,
+            "videos_count": videos_count,
+            "broadcasts_count": broadcasts_count,
+        }
+
+    async def get_client_aggregate_metrics(self, client_id: int) -> Dict[str, int]:
+        """Returns aggregate metrics across all bots owned by a client."""
+        from app.db.models.video import Video
+        from app.db.models.viewer import Viewer
+
+        bot_status_counts = await self.count_by_client_and_status(client_id)
+
+        # Viewers across all client bots
+        v_stmt = (
+            select(func.count(Viewer.id))
+            .join(ClientBot, Viewer.client_bot_id == ClientBot.id)
+            .where(ClientBot.client_id == client_id)
+        )
+        v_res = await self.session.execute(v_stmt)
+        total_viewers = v_res.scalar() or 0
+
+        # Videos across all client bots
+        vid_stmt = (
+            select(func.count(Video.id))
+            .join(ClientBot, Video.client_bot_id == ClientBot.id)
+            .where(ClientBot.client_id == client_id)
+        )
+        vid_res = await self.session.execute(vid_stmt)
+        total_videos = vid_res.scalar() or 0
+
+        return {
+            **bot_status_counts,
+            "total_viewers": total_viewers,
+            "total_videos": total_videos,
+        }
 
     async def search(self, query: str, limit: int = 20) -> List[ClientBot]:
         clean_q = query.strip().lstrip("@")

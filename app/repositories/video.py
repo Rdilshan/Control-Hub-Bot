@@ -157,6 +157,14 @@ class VideoRepository(BaseRepository[Video]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_ready_by_bot(
+        self,
+        client_bot_id: int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Video]:
+        return await self.list_by_bot(client_bot_id=client_bot_id, status=VideoStatus.READY, limit=limit, offset=offset)
+
     async def list_processing_by_bot(
         self,
         client_bot_id: int,
