@@ -1,13 +1,13 @@
-"""Main API router registry."""
-
 from fastapi import APIRouter
-from app.api.routes import health
+from app.api.routes import control_hub_webhook, health
 
 api_router = APIRouter()
 
 # Health endpoints (kept at root level /health and /health/ready per spec)
 api_router.include_router(health.router)
 
-# Versioned API sub-router for future endpoints
+# Versioned API sub-router
 v1_router = APIRouter(prefix="/api/v1")
+v1_router.include_router(control_hub_webhook.router)
 api_router.include_router(v1_router)
+

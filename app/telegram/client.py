@@ -1,6 +1,6 @@
 """Async Telegram Bot API client and token validation foundation."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 from app.config import get_settings
 from app.core.security import mask_bot_token
@@ -150,18 +150,105 @@ class TelegramClient:
 
         return await self.request("sendMessage", json_data=payload)
 
+    async def edit_message_text(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        text: str,
+        parse_mode: Optional[str] = "HTML",
+        reply_markup: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Edits an existing text message."""
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
+        return await self.request("editMessageText", json_data=payload)
+
+    async def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: Optional[str] = None,
+        show_alert: bool = False,
+    ) -> bool:
+        """Acknowledges an incoming callback query to dismiss the client loading state."""
+        payload: Dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        if show_alert:
+            payload["show_alert"] = show_alert
+
+        result = await self.request("answerCallbackQuery", json_data=payload)
+        return bool(result)
+
+    async def set_my_commands(
+        self,
+        commands: List[Dict[str, str]],
+        scope: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Configures the bot command menu with Telegram."""
+        payload: Dict[str, Any] = {"commands": commands}
+        if scope:
+            payload["scope"] = scope
+        result = await self.request("setMyCommands", json_data=payload)
+        return bool(result)
+
+    async def set_webhook(
+        self,
+        url: str,
+        secret_token: Optional[str] = None,
+        allowed_updates: Optional[List[str]] = None,
+        drop_pending_updates: bool = False,
+    ) -> bool:
+        """Sets the Telegram webhook URL."""
+        payload: Dict[str, Any] = {
+            "url": url,
+            "drop_pending_updates": drop_pending_updates,
+        }
+        if secret_token:
+            payload["secret_token"] = secret_token
+        if allowed_updates:
+            payload["allowed_updates"] = allowed_updates
+
+        result = await self.request("setWebhook", json_data=payload)
+        return bool(result)
+
+    async def delete_webhook(self, drop_pending_updates: bool = False) -> bool:
+        """Deletes the active webhook (needed before switching to polling)."""
+        payload = {"drop_pending_updates": drop_pending_updates}
+        result = await self.request("deleteWebhook", json_data=payload)
+        return bool(result)
+
+    async def get_webhook_info(self) -> Dict[str, Any]:
+        """Gets current webhook status from Telegram."""
+        return await self.request("getWebhookInfo")
+
+    async def get_updates(
+        self,
+        offset: Optional[int] = None,
+        limit: int = 100,
+        timeout: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves incoming updates via long-polling."""
+        payload: Dict[str, Any] = {"limit": limit, "timeout": timeout}
+        if offset is not None:
+            payload["offset"] = offset
+
+        result = await self.request("getUpdates", json_data=payload)
+        return result if isinstance(result, list) else []
+
 
 async def validate_bot_token(
     token: str,
     base_url: Optional[str] = None,
     http_client: Optional[httpx.AsyncClient] = None,
 ) -> TelegramBotInfo:
-    """Validates a Telegram bot token by making a test getMe call.
-    
-    Returns:
-        TelegramBotInfo on success
-    Raises:
-        TelegramInvalidTokenError or other TelegramAPIError on failure
-    """
+    """Validates a Telegram bot token by making a test getMe call."""
     client = TelegramClient(token=token, base_url=base_url, http_client=http_client)
     return await client.get_me()

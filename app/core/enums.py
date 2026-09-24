@@ -14,6 +14,12 @@ class BotType(str, Enum):
     CLIENT_BOT = "CLIENT_BOT"
 
 
+class ControlHubRole(str, Enum):
+    PLATFORM_OWNER = "PLATFORM_OWNER"
+    CLIENT = "CLIENT"
+    NEW_CLIENT = "NEW_CLIENT"
+
+
 class ClientStatus(str, Enum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
