@@ -37,6 +37,11 @@ class ClientBotRepository(BaseRepository[ClientBot]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_public_id(self, public_id: str) -> Optional[ClientBot]:
+        stmt = select(ClientBot).where(ClientBot.public_id == public_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_by_client(self, client_id: int) -> List[ClientBot]:
         stmt = select(ClientBot).where(ClientBot.client_id == client_id).order_by(ClientBot.id.asc())
         result = await self.session.execute(stmt)
