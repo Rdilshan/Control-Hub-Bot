@@ -46,6 +46,22 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
         await self.session.flush()
         return job
 
+    async def has_active_catchup_job(self, client_bot_id: int, viewer_id: int) -> bool:
+        """Checks if a pending or running catch-up job exists for the given viewer."""
+        stmt = (
+            select(BackgroundJob)
+            .where(
+                BackgroundJob.client_bot_id == client_bot_id,
+                BackgroundJob.job_type == JobType.CATCHUP,
+                BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING]),
+            )
+        )
+        result = await self.session.execute(stmt)
+        for job in result.scalars().all():
+            if job.payload and job.payload.get("viewer_id") == viewer_id:
+                return True
+        return False
+
     async def mark_running(self, job_id: int) -> Optional[BackgroundJob]:
         job = await self.get_by_id(job_id)
         if job:

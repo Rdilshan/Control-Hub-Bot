@@ -43,49 +43,52 @@ class ClientViewerRouter:
         text = actor_data.get("text") or ""
         cmd = text.lower().split()[0] if text.startswith("/") else ""
 
-        # Fetch custom bot settings if available
-        settings_stmt = select(ClientBotSettings).where(ClientBotSettings.client_bot_id == bot_ctx.client_bot_id)
-        settings_res = await session.execute(settings_stmt)
-        bot_settings = settings_res.scalar_one_or_none()
+        # Instantiate ViewerService
+        from app.services.viewer_service import ViewerService
+        from app.db.models.client_bot import ClientBot
+
+        viewer_service = ViewerService(session)
+        # Fetch or mock ClientBot model
+        bot_model = await session.get(ClientBot, bot_ctx.client_bot_id)
+        if not bot_model:
+            bot_model = ClientBot(
+                id=bot_ctx.client_bot_id,
+                client_id=bot_ctx.client_id,
+                telegram_bot_id=bot_ctx.telegram_bot_id,
+                username=bot_ctx.bot_username,
+                display_name=bot_ctx.display_name,
+                status=bot_ctx.status,
+            )
 
         # 1. Handle Viewer /start
         if cmd == "/start":
-            viewer_repo = ViewerRepository(session)
-            await viewer_repo.get_or_create_viewer(
-                client_bot_id=bot_ctx.client_bot_id,
+            return await viewer_service.handle_viewer_start(
+                client_bot=bot_model,
                 telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
                 username=actor.username,
                 first_name=actor.first_name,
                 last_name=actor.last_name,
                 language_code=actor.language_code,
             )
-            await session.commit()
-
-            start_text = bot_settings.start_message if bot_settings and bot_settings.start_message else None
-            await self.telegram_client.send_message(
-                chat_id=actor.chat_id,
-                text=messages.viewer_welcome_message(
-                    custom_start_message=start_text,
-                    bot_username=bot_ctx.bot_username,
-                ),
-            )
-            return {"ok": True, "action": "viewer_start"}
 
         # 2. Handle Viewer /help
         if cmd == "/help":
-            await self.telegram_client.send_message(
+            return await viewer_service.handle_viewer_help(
+                client_bot=bot_model,
+                telegram_user_id=actor.telegram_user_id,
                 chat_id=actor.chat_id,
-                text=messages.viewer_help_message(bot_username=bot_ctx.bot_username),
+                telegram_client=self.telegram_client,
             )
-            return {"ok": True, "action": "viewer_help"}
 
         # 3. Any unrecognized message / text -> Send custom default_message
-        default_reply = bot_settings.default_message if bot_settings and bot_settings.default_message else None
-        await self.telegram_client.send_message(
+        return await viewer_service.handle_viewer_default_reply(
+            client_bot=bot_model,
+            telegram_user_id=actor.telegram_user_id,
             chat_id=actor.chat_id,
-            text=messages.default_reply_message(custom_default=default_reply),
+            telegram_client=self.telegram_client,
         )
-        return {"ok": True, "action": "viewer_default_reply"}
 
     async def _handle_callback_query(
         self,

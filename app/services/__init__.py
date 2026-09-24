@@ -4,6 +4,7 @@ from app.services.client_bot_provisioning_service import ClientBotProvisioningSe
 from app.services.client_onboarding_service import ClientOnboardingService
 from app.services.control_hub_service import ControlHubService
 from app.services.platform_owner_service import PlatformOwnerService
+from app.services.viewer_service import ViewerService
 
 __all__ = [
     "BotTokenEncryptionService",
@@ -12,4 +13,5 @@ __all__ = [
     "ClientOnboardingService",
     "ControlHubService",
     "PlatformOwnerService",
+    "ViewerService",
 ]
