@@ -9,10 +9,14 @@ from app.services.catchup_scheduler_service import CatchupSchedulerService
 from app.services.catchup_service import CatchupService
 from app.services.catchup_video_selector_service import CatchupVideoSelectorService
 from app.services.client_bot_connection_service import ClientBotConnectionService
+from app.services.client_bot_health_service import ClientBotHealthService
+from app.services.client_bot_lifecycle_service import ClientBotLifecycleService
 from app.services.client_bot_provisioning_service import ClientBotProvisioningService
+from app.services.client_bot_reconnect_service import ClientBotReconnectService
 from app.services.client_bot_sponsor_service import ClientBotSponsorService
 from app.services.client_onboarding_service import ClientOnboardingService
 from app.services.control_hub_service import ControlHubService
+from app.services.lifecycle_capability_service import LifecycleCapabilityService
 from app.services.platform_owner_service import PlatformOwnerService
 from app.services.preview_photo_service import PreviewPhotoService
 from app.services.telegram_broadcast_rate_limiter import (
@@ -41,10 +45,14 @@ __all__ = [
     "CatchupService",
     "CatchupVideoSelectorService",
     "ClientBotConnectionService",
+    "ClientBotHealthService",
+    "ClientBotLifecycleService",
     "ClientBotProvisioningService",
+    "ClientBotReconnectService",
     "ClientBotSponsorService",
     "ClientOnboardingService",
     "ControlHubService",
+    "LifecycleCapabilityService",
     "PlatformOwnerService",
     "PreviewPhotoService",
     "TelegramBroadcastRateLimiter",

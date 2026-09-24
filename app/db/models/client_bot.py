@@ -38,6 +38,10 @@ class ClientBot(Base, IntegerIdMixin, TimestampMixin):
     paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     disconnected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    desired_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    lifecycle_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
 
     # Relationships
     client: Mapped["Client"] = relationship("Client", back_populates="bots")
