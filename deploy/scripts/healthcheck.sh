@@ -2,10 +2,10 @@
 # Production Healthcheck Script for Control Hub
 set -euo pipefail
 
-APP_URL="${APP_URL:-http://localhost:8000}"
+APP_URL="${APP_URL:-http://127.0.0.1:8008}"
 
 echo "🏥 Checking Application Liveness (/health)..."
-HEALTH_STATUS=$(curl -fsS "${APP_URL}/health" 2>/dev/null || echo "FAILED")
+HEALTH_STATUS=$(curl -fsS "${APP_URL}/health" 2>/dev/null || curl -fsS "http://localhost:8000/health" 2>/dev/null || docker compose -f "$(dirname "$0")/../docker-compose.prod.yml" exec -T app curl -fsS "http://localhost:8000/health" 2>/dev/null || echo "FAILED")
 if [[ "${HEALTH_STATUS}" =~ "status" ]]; then
     echo "  ✅ Liveness Check: OK (${HEALTH_STATUS})"
 else
@@ -14,7 +14,7 @@ else
 fi
 
 echo "🏥 Checking Application Readiness (/ready)..."
-READY_STATUS=$(curl -fsS "${APP_URL}/ready" 2>/dev/null || echo "FAILED")
+READY_STATUS=$(curl -fsS "${APP_URL}/ready" 2>/dev/null || curl -fsS "http://localhost:8000/ready" 2>/dev/null || docker compose -f "$(dirname "$0")/../docker-compose.prod.yml" exec -T app curl -fsS "http://localhost:8000/ready" 2>/dev/null || echo "FAILED")
 if [[ "${READY_STATUS}" =~ "ready" ]]; then
     echo "  ✅ Readiness Check: OK (${READY_STATUS})"
 else

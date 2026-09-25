@@ -23,8 +23,7 @@ class SchedulerRunner:
 
     async def run(self):
         logger.info("Starting periodic scheduler (cycle_interval=%.1fs)", self.cycle_interval)
-        redis_client = await get_redis_client()
-        monitor = SystemMonitoringService(redis_client)
+        monitor = SystemMonitoringService()
 
         iteration = 0
         while self._running:

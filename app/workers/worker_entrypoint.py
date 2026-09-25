@@ -30,8 +30,7 @@ class BackgroundWorkerRunner:
 
     async def run(self):
         logger.info("Starting worker loop for queue=%s (poll_interval=%.1fs)", self.queue_name, self.poll_interval)
-        redis_client = await get_redis_client()
-        monitor = SystemMonitoringService(redis_client)
+        monitor = SystemMonitoringService()
 
         while self._running:
             try:

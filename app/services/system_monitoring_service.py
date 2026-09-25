@@ -46,6 +46,10 @@ class SystemMonitoringService:
         except Exception as exc:
             logger.warning(f"Could not record worker heartbeat for '{worker_name}': {exc}")
 
+    async def record_heartbeat(self, worker_name: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Alias for record_worker_heartbeat accepting metadata."""
+        await self.record_worker_heartbeat(worker_name)
+
     async def get_worker_statuses(self) -> Dict[str, Any]:
         """Checks status of all registered background workers."""
         try:
