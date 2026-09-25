@@ -14,3 +14,7 @@ REDIS_KEY_BROADCAST_LOCK = f"{REDIS_KEY_PREFIX}:broadcast-lock:{{broadcast_id}}"
 HEADER_REQUEST_ID = "X-Request-ID"
 HEADER_INTERNAL_KEY = "X-Internal-Key"
 HEADER_TELEGRAM_BOT_API_SECRET_TOKEN = "X-Telegram-Bot-Api-Secret-Token"
+
+# Batching Constants
+BROADCAST_BATCH_SIZE = 500
+
