@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.security import verify_constant_time
 from app.db.session import get_db
 from app.logging_config import get_logger
 from app.telegram.control_hub.router import ControlHubRouter
@@ -26,7 +27,9 @@ async def handle_control_hub_webhook(
     # Secret token validation
     expected_secret = settings.TELEGRAM_WEBHOOK_SECRET
     if expected_secret:
-        if not x_telegram_bot_api_secret_token or x_telegram_bot_api_secret_token != expected_secret:
+        if not x_telegram_bot_api_secret_token or not verify_constant_time(
+            x_telegram_bot_api_secret_token, expected_secret
+        ):
             logger.warning("Rejected Telegram webhook update due to invalid or missing secret token")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

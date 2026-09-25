@@ -38,6 +38,9 @@ class ClientBotStatus(str, Enum):
     PROVISION_FAILED = "PROVISION_FAILED"
 
 
+BotStatus = ClientBotStatus
+
+
 class BotAdminRole(str, Enum):
     OWNER = "OWNER"
     ADMIN = "ADMIN"
@@ -196,6 +199,9 @@ class BotEventType(str, Enum):
     CATCHUP_STARTED = "CATCHUP_STARTED"
     CATCHUP_COMPLETED = "CATCHUP_COMPLETED"
     JOB_MANUAL_RETRY = "JOB_MANUAL_RETRY"
+    SPONSOR_CHANGED = "SPONSOR_CHANGED"
+    START_MESSAGE_CHANGED = "START_MESSAGE_CHANGED"
+    DEFAULT_MESSAGE_CHANGED = "DEFAULT_MESSAGE_CHANGED"
 
 
 def enum_val(v: object) -> str:

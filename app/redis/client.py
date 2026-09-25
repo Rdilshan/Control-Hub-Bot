@@ -66,6 +66,9 @@ def get_redis() -> aioredis.Redis:
     return _redis_client
 
 
+get_redis_client = get_redis
+
+
 def init_redis(redis_url: Optional[str] = None) -> aioredis.Redis:
     """Initializes the async Redis client."""
     global _redis_client

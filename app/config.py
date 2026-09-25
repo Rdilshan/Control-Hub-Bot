@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     TELEGRAM_WEBHOOK_BASE_URL: Optional[str] = None
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
     INTERNAL_API_SECRET: Optional[str] = None
+    WEBHOOK_MAX_BODY_BYTES: int = 1_048_576  # 1MB max body size for telegram webhooks
+
+    # Rate Limiting Settings
+    RATE_LIMIT_VIEWER_PER_MINUTE: int = 30
+    RATE_LIMIT_ADMIN_PER_MINUTE: int = 120
+    RATE_LIMIT_CONNECTBOT_ATTEMPTS: int = 5
 
     # Video Processing & Unlockify Provider
     UNLOCKIFY_API_BASE_URL: str = "https://developer.unlockify.ink/api/v1"

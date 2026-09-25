@@ -45,14 +45,20 @@ def init_db_engine(database_url: Optional[str] = None) -> AsyncEngine:
     settings = get_settings()
     url = database_url or settings.DATABASE_URL
 
-    _engine = create_async_engine(
-        url,
-        echo=False,
-        pool_size=settings.DB_POOL_SIZE,
-        max_overflow=settings.DB_MAX_OVERFLOW,
-        pool_timeout=settings.DB_POOL_TIMEOUT,
-        pool_pre_ping=True,
-    )
+    if "sqlite" in url:
+        _engine = create_async_engine(
+            url,
+            echo=False,
+        )
+    else:
+        _engine = create_async_engine(
+            url,
+            echo=False,
+            pool_size=settings.DB_POOL_SIZE,
+            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_timeout=settings.DB_POOL_TIMEOUT,
+            pool_pre_ping=True,
+        )
     _session_factory = async_sessionmaker(
         bind=_engine,
         class_=AsyncSession,
