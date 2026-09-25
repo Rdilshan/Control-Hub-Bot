@@ -65,6 +65,10 @@ class CatchupWorker:
             return result
         except Exception as exc:
             logger.exception("Unexpected error executing catchup job id=%d: %s", job_id, exc)
-            await self.job_repo.mark_failed(job_id, "UNEXPECTED_ERROR", str(exc))
-            await self.session.commit()
+            await self.session.rollback()
+            try:
+                await self.job_repo.mark_failed(job_id, "UNEXPECTED_ERROR", str(exc))
+                await self.session.commit()
+            except Exception as mark_err:
+                logger.error("Failed to mark catchup job %d as failed: %s", job_id, mark_err)
             return {"ok": False, "error": "UNEXPECTED_ERROR", "message": str(exc)}
