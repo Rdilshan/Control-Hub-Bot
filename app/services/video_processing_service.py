@@ -152,19 +152,30 @@ class VideoProcessingService:
                 else:
                     destination_url = self.url_service.build_destination_url(video.public_id)
 
-                link_data = await self.unlockify_client.create_link(
-                    title=title,
-                    advertisement_urls=[sponsor_config.sponsor_url],
-                    destination_url=destination_url,
-                )
-                unlock_url = link_data.unlock_url
+                try:
+                    link_data = await self.unlockify_client.create_link(
+                        title=title,
+                        advertisement_urls=[sponsor_config.sponsor_url],
+                        destination_url=destination_url,
+                    )
+                    unlock_url = link_data.unlock_url
+                    link_id = link_data.id
+                    provider = "unlockify"
+                except Exception as unlockify_err:
+                    logger.warning(
+                        "Unlockify API call failed (%s). Falling back to direct sponsor link.",
+                        unlockify_err,
+                    )
+                    unlock_url = sponsor_config.sponsor_url
+                    link_id = None
+                    provider = "direct_sponsor"
 
                 await self.unlock_link_repo.create(
                     video_id=video.id,
                     client_bot_id=client_bot.id,
                     url=unlock_url,
-                    provider="unlockify",
-                    external_reference=link_data.id,
+                    provider=provider,
+                    external_reference=link_id,
                 )
                 await self.proc_repo.update_progress(
                     video_id=video.id,

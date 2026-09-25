@@ -103,6 +103,13 @@ class PreviewPhotoService:
             logger.info("Successfully prepared preview photo file_id: %s", preview_file_id)
             return preview_file_id
 
+        except Exception as upload_exc:
+            logger.warning("Preview photo upload failed (%s).", upload_exc)
+            if source_thumbnail_file_id:
+                logger.info("Falling back to source_thumbnail_file_id: %s", source_thumbnail_file_id)
+                return source_thumbnail_file_id
+            raise
+
         finally:
             if temp_file_path and os.path.exists(temp_file_path):
                 try:

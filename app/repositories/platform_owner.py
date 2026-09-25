@@ -17,6 +17,15 @@ class PlatformOwnerRepository(BaseRepository[PlatformOwner]):
         return result.scalar_one_or_none()
 
     async def is_owner(self, telegram_user_id: int) -> bool:
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.PLATFORM_OWNER_TELEGRAM_ID and telegram_user_id == settings.PLATFORM_OWNER_TELEGRAM_ID:
+            owner = await self.get_by_telegram_user_id(telegram_user_id)
+            if not owner:
+                await self.create(telegram_user_id=telegram_user_id)
+                await self.session.flush()
+            return True
+
         owner = await self.get_by_telegram_user_id(telegram_user_id)
         return bool(owner and owner.is_active)
 
