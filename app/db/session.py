@@ -39,6 +39,11 @@ def async_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
+def AsyncSessionLocal() -> AsyncSession:
+    """Convenience callable returning a new AsyncSession."""
+    return async_session_factory()()
+
+
 def init_db_engine(database_url: Optional[str] = None) -> AsyncEngine:
     """Initializes the global AsyncEngine."""
     global _engine, _session_factory

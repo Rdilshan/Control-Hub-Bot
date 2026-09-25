@@ -27,8 +27,17 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
 
-    # Redis Configuration
+    # Redis & Celery Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_APP_URL: Optional[str] = None
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+
+    # Maintenance & Capacity Configuration
+    MAINTENANCE_MODE: bool = False
+    MAX_ACTIVE_VIDEO_PROCESSING_PER_CLIENT: int = 3
+    MAX_ACTIVE_CATCHUP_PER_BOT: int = 5
+    MAX_ACTIVE_CATCHUP_PER_CLIENT: int = 10
 
     # Telegram Bot Settings
     CONTROL_HUB_BOT_TOKEN: Optional[str] = None

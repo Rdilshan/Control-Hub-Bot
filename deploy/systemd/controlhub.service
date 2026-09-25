@@ -1,0 +1,17 @@
+[Unit]
+Description=Control Hub Production Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/controlhub/deploy
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml stop
+ExecReload=/usr/bin/docker compose -f docker-compose.prod.yml restart
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

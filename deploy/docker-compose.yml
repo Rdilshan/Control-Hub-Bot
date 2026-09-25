@@ -1,0 +1,82 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: controlhub_app_dev
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./env/.env.example
+    volumes:
+      - ../app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - controlhub_internal
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: controlhub_worker_dev
+    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=all"]
+    env_file:
+      - ./env/.env.example
+    volumes:
+      - ../app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - controlhub_internal
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: controlhub_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: control_hub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d control_hub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - controlhub_internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: controlhub_redis_dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - controlhub_internal
+
+networks:
+  controlhub_internal:
+    driver: bridge
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
