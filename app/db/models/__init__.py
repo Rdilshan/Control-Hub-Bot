@@ -18,6 +18,7 @@ from app.db.models.viewer_catchup import ViewerCatchup
 from app.db.models.video_delivery import VideoDelivery
 from app.db.models.background_job import BackgroundJob
 from app.db.models.bot_event import BotEvent
+from app.db.models.processed_update import ProcessedTelegramUpdate
 
 __all__ = [
     "Base",
@@ -38,4 +39,6 @@ __all__ = [
     "VideoDelivery",
     "BackgroundJob",
     "BotEvent",
+    "ProcessedTelegramUpdate",
 ]
+

@@ -24,6 +24,9 @@ class UnlockLinkRepository(BaseRepository[UnlockLink]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_video_id(self, video_id: int) -> Optional[UnlockLink]:
+        return await self.get_active_by_video(video_id)
+
     async def create(
         self,
         video_id: int,
@@ -43,3 +46,18 @@ class UnlockLinkRepository(BaseRepository[UnlockLink]):
         self.session.add(link)
         await self.session.flush()
         return link
+
+    async def create_link(
+        self,
+        video_id: int,
+        client_bot_id: int,
+        unlock_url: str,
+        provider: str = "unlockify",
+    ) -> UnlockLink:
+        return await self.create(
+            video_id=video_id,
+            client_bot_id=client_bot_id,
+            url=unlock_url,
+            provider=provider,
+        )
+

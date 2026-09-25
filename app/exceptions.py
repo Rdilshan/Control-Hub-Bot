@@ -156,3 +156,56 @@ class UnlockifyRequestRejectedError(UnlockifyError):
     def __init__(self, message: str = "Unlockify rejected request", details: Optional[Dict[str, Any]] = None):
         super().__init__(message=message, code="UNLOCKIFY_REJECTED_REQUEST", status_code=400, details=details)
 
+
+# Domain-specific exception aliases and classes
+ControlHubError = ApplicationError
+UnlockifyTimeoutException = UnlockifyTimeoutError
+
+
+class InvalidBotTokenException(UnauthorizedError):
+    """Raised when Telegram bot token is rejected as invalid or revoked."""
+
+    def __init__(self, message: str = "Bot token is invalid", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, details=details)
+        self.code = "INVALID_BOT_TOKEN"
+
+
+class BotPausedException(ForbiddenError):
+    """Raised when an operation is attempted on a paused bot."""
+
+    def __init__(self, bot_id: Optional[int] = None, message: str = "Bot is paused"):
+        super().__init__(message=message, details={"bot_id": bot_id} if bot_id else None)
+        self.code = "BOT_PAUSED"
+
+
+class BotDisconnectedException(ForbiddenError):
+    """Raised when an operation is attempted on a disconnected bot."""
+
+    def __init__(self, bot_id: Optional[int] = None, message: str = "Bot is disconnected"):
+        super().__init__(message=message, details={"bot_id": bot_id} if bot_id else None)
+        self.code = "BOT_DISCONNECTED"
+
+
+class SponsorNotConfiguredException(ValidationError):
+    """Raised when video operations require sponsor configuration that does not exist."""
+
+    def __init__(self, message: str = "Sponsor is not configured for this bot"):
+        super().__init__(message=message)
+        self.code = "SPONSOR_NOT_CONFIGURED"
+
+
+class VideoNotReadyException(ValidationError):
+    """Raised when broadcast or unlock requires a video that is not in READY state."""
+
+    def __init__(self, message: str = "Video is not ready for delivery"):
+        super().__init__(message=message)
+        self.code = "VIDEO_NOT_READY"
+
+
+class VideoProcessingFailedException(ApplicationError):
+    """Raised when video processing pipeline fails."""
+
+    def __init__(self, message: str = "Video processing failed", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message=message, code="VIDEO_PROCESSING_FAILED", status_code=500, details=details)
+
+

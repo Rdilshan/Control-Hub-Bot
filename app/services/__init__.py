@@ -42,6 +42,10 @@ from app.services.queue_monitoring_service import QueueMonitoringService
 from app.services.job_monitoring_service import JobMonitoringService
 from app.services.broadcast_monitoring_service import BroadcastMonitoringService
 from app.services.system_monitoring_service import SystemMonitoringService
+from app.services.telegram_rate_limit_coordinator import TelegramRateLimitCoordinator
+from app.services.job_retry_service import JobRetryService
+from app.services.job_recovery_service import JobRecoveryService
+from app.services.fair_scheduling_service import FairSchedulingService
 
 __all__ = [
     "BotTokenEncryptionService",
@@ -85,4 +89,9 @@ __all__ = [
     "JobMonitoringService",
     "BroadcastMonitoringService",
     "SystemMonitoringService",
+    "TelegramRateLimitCoordinator",
+    "JobRetryService",
+    "JobRecoveryService",
+    "FairSchedulingService",
 ]
+

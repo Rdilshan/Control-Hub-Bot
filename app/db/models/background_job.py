@@ -35,6 +35,8 @@ class BackgroundJob(Base, IntegerIdMixin, TimestampMixin):
         ForeignKey("broadcasts.id", ondelete="SET NULL"),
         nullable=True,
     )
+    resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    resource_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     status: Mapped[JobStatus] = mapped_column(
         String(50),
         default=JobStatus.PENDING,
@@ -42,6 +44,7 @@ class BackgroundJob(Base, IntegerIdMixin, TimestampMixin):
         nullable=False,
     )
     queue_name: Mapped[str] = mapped_column(String(100), default="default", nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -53,9 +56,27 @@ class BackgroundJob(Base, IntegerIdMixin, TimestampMixin):
         index=True,
         nullable=False,
     )
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        index=True,
+        nullable=False,
+    )
+    queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deduplication_key: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    parent_job_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("background_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index("ix_jobs_status_scheduled", "status", "scheduled_at"),
+        Index("ix_jobs_status_available", "status", "available_at"),
     )
+
