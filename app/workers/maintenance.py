@@ -1,7 +1,7 @@
 """Maintenance and Recovery Worker Tasks."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.jobs.recovery import JobRecoveryService
 
