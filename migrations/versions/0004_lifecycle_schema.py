@@ -1,6 +1,6 @@
-"""lifecycle_and_extended_schema
+"""lifecycle_schema
 
-Revision ID: 0004_lifecycle_and_extended_schema
+Revision ID: 0004_lifecycle_schema
 Revises: 0003_video_creation
 Create Date: 2026-09-25 10:30:00.000000
 
@@ -10,8 +10,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
-revision: str = "0004_lifecycle_and_extended_schema"
+# revision identifiers, used by Alembic. Max length 32 characters.
+revision: str = "0004_lifecycle_schema"
 down_revision: Union[str, None] = "0003_video_creation"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
