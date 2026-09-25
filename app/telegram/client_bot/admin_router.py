@@ -57,7 +57,37 @@ class ClientAdminRouter:
                 status=bot_ctx.status,
             )
 
-        # 1. Check if Admin is in video intake state
+        # 1. Check if Admin is in video intake or sponsor configuration state
+        from app.telegram.client_bot.admin.sponsor import (
+            WAITING_FOR_SPONSOR_URL,
+            apply_sponsor_url,
+            clear_sponsor_state,
+            get_sponsor_state,
+            handle_sponsor_command,
+        )
+
+        sponsor_state = await get_sponsor_state(
+            client_bot_id=bot_ctx.client_bot_id,
+            telegram_user_id=actor.telegram_user_id,
+        )
+        if sponsor_state == WAITING_FOR_SPONSOR_URL:
+            if cmd in ("/cancel", "cancel"):
+                await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+                await self.telegram_client.send_message(
+                    chat_id=actor.chat_id,
+                    text="❌ Sponsor setup cancelled.",
+                )
+                return {"ok": True, "action": "admin_sponsor_cancel"}
+            if not cmd.startswith("/"):
+                return await apply_sponsor_url(
+                    client_bot_id=bot_ctx.client_bot_id,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    url=text.strip(),
+                    telegram_client=self.telegram_client,
+                    session=session,
+                )
+
         creation_state = await video_service.get_creation_state(
             client_bot_id=bot_ctx.client_bot_id,
             telegram_user_id=actor.telegram_user_id,
@@ -97,7 +127,18 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 3. Check /videos command
+        # 3. Check /sponsor command
+        if cmd == "/sponsor" or cmd.startswith("/sponsor"):
+            return await handle_sponsor_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                text=text,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 4. Check /videos command
         if cmd == "/videos":
             from app.telegram.client_bot.admin.videos import handle_videos_command
             return await handle_videos_command(
@@ -107,7 +148,7 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 4. Check /processing command
+        # 5. Check /processing command
         if cmd == "/processing":
             from app.telegram.client_bot.admin.processing import handle_processing_command
             return await handle_processing_command(
@@ -117,7 +158,7 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 5. Check /stats command
+        # 6. Check /stats command
         if cmd == "/stats":
             from app.telegram.client_bot.admin.stats import handle_stats_command
             return await handle_stats_command(
@@ -127,7 +168,7 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 6. Check /users command
+        # 7. Check /users command
         if cmd == "/users":
             from app.telegram.client_bot.admin.users import handle_users_command
             return await handle_users_command(
@@ -137,7 +178,7 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 7. Check /broadcasts command
+        # 8. Check /broadcasts command
         if cmd == "/broadcasts":
             from app.telegram.client_bot.admin.broadcasts import handle_broadcasts_command
             return await handle_broadcasts_command(
@@ -147,8 +188,9 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 8. Check /cancel outside session
+        # 9. Check /cancel outside session
         if cmd in ("/cancel", "cancel"):
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
@@ -172,6 +214,7 @@ class ClientAdminRouter:
                     session=session,
                 )
 
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
@@ -186,7 +229,6 @@ class ClientAdminRouter:
 
         # Built-in Admin Commands
         admin_commands = {
-            "/sponsor": "🔓 <b>Sponsor Configuration</b>\n\nConfigure your Unlockify API keys and monetization links here. (Stage 12)",
             "/startmessage": "💬 <b>Custom Start Message</b>\n\nCustomize the welcome message shown to new viewers.",
             "/defaultmessage": "🔁 <b>Default Reply Message</b>\n\nCustomize the fallback response for unrecognized viewer messages.",
         }
@@ -300,8 +342,30 @@ class ClientAdminRouter:
                 message_id=msg_id if cb_data.endswith(":refresh") else None,
             )
 
+        if cb_data == "admin:dashboard":
+            await self.telegram_client.send_message(
+                chat_id=actor.chat_id,
+                text=messages.admin_welcome_message(
+                    bot_username=bot_ctx.bot_username,
+                    display_name=bot_ctx.display_name,
+                    client_first_name=actor.first_name,
+                ),
+                reply_markup=keyboards.admin_dashboard_keyboard(),
+            )
+            return {"ok": True, "action": "admin_dashboard"}
+
+        if cb_data.startswith("admin:sponsor"):
+            from app.telegram.client_bot.admin.sponsor import handle_sponsor_callback
+            return await handle_sponsor_callback(
+                client_bot_id=bot_ctx.client_bot_id,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                callback_data=cb_data,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
         responses = {
-            "admin:sponsor": "🔓 Send /sponsor to manage Unlockify monetization settings.",
             "admin:messages": "💬 Send /startmessage or /defaultmessage to customize greetings.",
         }
 
