@@ -143,3 +143,31 @@ class JobRecoveryService:
                     created_jobs.append(job)
 
         return created_jobs
+
+    async def reconcile_stalled_catchups(self) -> List[BackgroundJob]:
+        """Finds active viewer catchup states that lack a running/pending background job and re-queues them."""
+        stmt = select(ViewerCatchup).where(
+            ViewerCatchup.status.in_([CatchupStatus.PENDING, CatchupStatus.RUNNING, CatchupStatus.PAUSED])
+        )
+        result = await self.session.execute(stmt)
+        catchups = list(result.scalars().all())
+
+        requeued_jobs: List[BackgroundJob] = []
+        for catchup in catchups:
+            has_job = await self.job_repo.has_active_catchup_job(catchup.client_bot_id, catchup.viewer_id)
+            if not has_job:
+                # Reset to PENDING if stuck in RUNNING without job
+                if catchup.status == CatchupStatus.RUNNING:
+                    catchup.status = CatchupStatus.PENDING
+
+                job = await self.job_repo.create_job(
+                    job_type=JobType.CATCHUP,
+                    payload={"viewer_id": catchup.viewer_id, "client_bot_id": catchup.client_bot_id},
+                    client_bot_id=catchup.client_bot_id,
+                    queue_name="catchup",
+                )
+                requeued_jobs.append(job)
+                logger.info("Reconciled and queued missing CATCHUP job id=%d for viewer id=%d", job.id, catchup.viewer_id)
+
+        return requeued_jobs
+

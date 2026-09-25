@@ -54,7 +54,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_worker_telegram
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=telegram_updates"]
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=telegram_updates"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     depends_on:
@@ -78,7 +82,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_worker_video
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=video_processing"]
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=video_processing"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     tmpfs:
@@ -104,7 +112,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_worker_broadcast
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=broadcast_live"]
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=broadcast_live"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     depends_on:
@@ -128,7 +140,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_worker_catchup
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=catchup"]
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=catchup"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     depends_on:
@@ -152,7 +168,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_worker_lifecycle
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.worker_entrypoint", "--queue=lifecycle"]
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=lifecycle"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     depends_on:
@@ -176,7 +196,11 @@ services:
       dockerfile: Dockerfile
     container_name: controlhub_scheduler
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.scheduler_entrypoint"]
+    command: ["python", "-u", "-m", "app.workers.scheduler_entrypoint"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      disable: true
     env_file:
       - ./env/.env.production
     depends_on:
