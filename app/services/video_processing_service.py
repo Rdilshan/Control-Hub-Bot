@@ -143,10 +143,22 @@ class VideoProcessingService:
             elif proc.unlock_url:
                 unlock_url = proc.unlock_url
             else:
-                title = video.caption or video.file_name or f"Video {video.public_id}"
-                if client_bot.username:
+                raw_title = video.caption or video.file_name or f"Video {video.public_id}"
+                clean_title = " ".join(raw_title.strip().split())
+                if len(clean_title) > 80:
+                    clean_title = clean_title[:80].strip()
+
+                bot_username = client_bot.username
+                if not bot_username:
+                    try:
+                        bot_info = await telegram_client.get_me()
+                        bot_username = bot_info.get("username")
+                    except Exception as me_err:
+                        logger.warning("Failed to fetch get_me for client_bot id=%d: %s", client_bot.id, me_err)
+
+                if bot_username:
                     destination_url = self.telegram_dest_service.build_destination(
-                        bot_username=client_bot.username,
+                        bot_username=bot_username,
                         video_public_id=video.public_id,
                     )
                 else:
@@ -154,7 +166,7 @@ class VideoProcessingService:
 
                 try:
                     link_data = await self.unlockify_client.create_link(
-                        title=title,
+                        title=clean_title,
                         advertisement_urls=[sponsor_config.sponsor_url],
                         destination_url=destination_url,
                     )

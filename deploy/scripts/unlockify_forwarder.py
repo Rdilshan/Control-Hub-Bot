@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Lightweight Dual-Stack Unlockify API Forwarder.
+"""Lightweight Dual-Stack Unlockify API Forwarder using curl -6.
 
-Routes Unlockify requests through the host's dual-stack network to bypass
-Cloudflare IPv4 datacenter rate-limiting/WAF by prioritizing IPv6.
+Routes Unlockify requests through curl with IPv6 and HTTP/2 to guarantee
+clean delivery through Cloudflare / StackCDN WAF rules.
 """
 
 import http.server
+import json
 import logging
-import socket
+import subprocess
 import sys
-import urllib.error
-import urllib.request
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,118 +17,134 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("unlockify_forwarder")
+
 TARGET_BASE = "https://developer.unlockify.ink"
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8099
 
-# Force IPv6 connection for developer.unlockify.ink to avoid IPv4 Cloudflare blocks
-_orig_getaddrinfo = socket.getaddrinfo
-
-def _ipv6_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    if host == "developer.unlockify.ink":
-        try:
-            # Explicitly force IPv6 resolution
-            res = _orig_getaddrinfo(host, port, socket.AF_INET6, type, proto, flags)
-            if res:
-                return res
-        except socket.gaierror as err:
-            logger.warning("Failed to resolve IPv6 for %s: %s", host, err)
-    return _orig_getaddrinfo(host, port, family, type, proto, flags)
-
-socket.getaddrinfo = _ipv6_only_getaddrinfo
-
 
 class UnlockifyProxyHandler(http.server.BaseHTTPRequestHandler):
-    """Proxy handler to forward requests to developer.unlockify.ink."""
+    """Proxy handler that forwards requests to developer.unlockify.ink via curl -6."""
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length) if length > 0 else None
+        body_bytes = self.rfile.read(length) if length > 0 else b"{}"
+        body_str = body_bytes.decode("utf-8", errors="replace")
         target_url = f"{TARGET_BASE}{self.path}"
 
-        headers = {
-            k: v
-            for k, v in self.headers.items()
-            if k.lower() not in ("host", "content-length", "connection")
-        }
-        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
+        logger.info("POST %s -> incoming payload: %s", self.path, body_str)
 
-        req = urllib.request.Request(
+        cmd = [
+            "curl",
+            "-6",
+            "-s",
+            "-i",
+            "-X",
+            "POST",
             target_url,
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-
-        logger.info("POST %s incoming payload: %s", self.path, body.decode('utf-8', errors='replace') if body else '')
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Accept: application/json",
+            "-H",
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "-d",
+            body_str,
+        ]
 
         try:
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                resp_body = resp.read()
-                self.send_response(resp.status)
-                for k, v in resp.getheaders():
-                    if k.lower() not in ("transfer-encoding", "content-encoding", "connection"):
-                        self.send_header(k, v)
-                self.end_headers()
-                self.wfile.write(resp_body)
-                logger.info("POST %s -> HTTP %s (Success: %s)", self.path, resp.status, resp_body.decode('utf-8', errors='replace'))
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read()
-            self.send_response(exc.code)
-            for k, v in exc.headers.items():
-                if k.lower() not in ("transfer-encoding", "content-encoding", "connection"):
-                    self.send_header(k, v)
+            proc = subprocess.run(cmd, capture_output=True, timeout=30)
+            raw_output = proc.stdout
+
+            # Parse HTTP response headers and body from curl -i
+            status_code = 200
+            headers_part = b""
+            body_part = b""
+
+            if b"\r\n\r\n" in raw_output:
+                # Handle possible multiple HTTP header blocks (e.g. HTTP/2 100 Continue then 201)
+                sections = raw_output.split(b"\r\n\r\n")
+                body_part = sections[-1]
+                last_header_block = sections[-2]
+                
+                header_lines = last_header_block.split(b"\r\n")
+                status_line = header_lines[0].decode("utf-8", errors="replace")
+                parts = status_line.split(" ", 2)
+                if len(parts) >= 2 and parts[1].isdigit():
+                    status_code = int(parts[1])
+            else:
+                body_part = raw_output
+
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_part)))
             self.end_headers()
-            self.wfile.write(err_body)
-            logger.warning("POST %s -> HTTP %s | Body: %s", self.path, exc.code, err_body.decode('utf-8', errors='replace'))
+            self.wfile.write(body_part)
+
+            decoded_body = body_part.decode("utf-8", errors="replace")
+            if status_code in (200, 201):
+                logger.info("POST %s -> HTTP %s (Success: %s)", self.path, status_code, decoded_body)
+            else:
+                logger.warning("POST %s -> HTTP %s (Response: %s)", self.path, status_code, decoded_body)
+
+        except subprocess.TimeoutExpired:
+            logger.error("POST %s timed out waiting for curl response", self.path)
+            self.send_response(504)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"success":false,"error":"Gateway Timeout"}')
         except Exception as exc:
-            logger.error("Failed to proxy request to %s: %s", target_url, exc)
+            logger.error("POST %s error: %s", self.path, exc)
             self.send_response(502)
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"success": false, "error": "Proxy Gateway Error"}')
+            self.wfile.write(b'{"success":false,"error":"Bad Gateway"}')
 
     def do_GET(self):
         if self.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status": "ok", "service": "unlockify-proxy"}')
+            self.wfile.write(b'{"status":"ok","service":"unlockify-proxy"}')
             return
 
         target_url = f"{TARGET_BASE}{self.path}"
-        req = urllib.request.Request(target_url, method="GET")
-        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        cmd = [
+            "curl",
+            "-6",
+            "-s",
+            "-i",
+            "-X",
+            "GET",
+            target_url,
+            "-H",
+            "Accept: application/json",
+            "-H",
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        ]
 
         try:
-            with urllib.request.urlopen(req, timeout=15.0) as resp:
-                resp_body = resp.read()
-                self.send_response(resp.status)
-                for k, v in resp.getheaders():
-                    if k.lower() not in ("transfer-encoding", "content-encoding", "connection"):
-                        self.send_header(k, v)
-                self.end_headers()
-                self.wfile.write(resp_body)
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read()
-            self.send_response(exc.code)
+            proc = subprocess.run(cmd, capture_output=True, timeout=15)
+            raw_output = proc.stdout
+            body_part = raw_output.split(b"\r\n\r\n")[-1] if b"\r\n\r\n" in raw_output else raw_output
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_part)))
             self.end_headers()
-            self.wfile.write(err_body)
+            self.wfile.write(body_part)
         except Exception as exc:
-            logger.error("GET error: %s", exc)
+            logger.error("GET %s error: %s", self.path, exc)
             self.send_response(502)
             self.end_headers()
-            self.wfile.write(b'{"error": "proxy error"}')
+            self.wfile.write(b'{"error":"proxy error"}')
 
     def log_message(self, format, *args):
-        # Override to use Python logging instead of stderr
         pass
 
 
 def main():
     server = http.server.HTTPServer((LISTEN_HOST, LISTEN_PORT), UnlockifyProxyHandler)
-    logger.info("Unlockify Dual-Stack Proxy listening on %s:%s", LISTEN_HOST, LISTEN_PORT)
+    logger.info("Unlockify Dual-Stack curl -6 Proxy listening on %s:%s", LISTEN_HOST, LISTEN_PORT)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
