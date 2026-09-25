@@ -18,10 +18,25 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("unlockify_forwarder")
-
 TARGET_BASE = "https://developer.unlockify.ink"
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8099
+
+# Force IPv6 connection for developer.unlockify.ink to avoid IPv4 Cloudflare blocks
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _ipv6_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host == "developer.unlockify.ink":
+        try:
+            # Explicitly force IPv6 resolution
+            res = _orig_getaddrinfo(host, port, socket.AF_INET6, type, proto, flags)
+            if res:
+                return res
+        except socket.gaierror as err:
+            logger.warning("Failed to resolve IPv6 for %s: %s", host, err)
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+socket.getaddrinfo = _ipv6_only_getaddrinfo
 
 
 class UnlockifyProxyHandler(http.server.BaseHTTPRequestHandler):
