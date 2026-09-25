@@ -30,7 +30,7 @@ docker compose -f "${COMPOSE_FILE}" build
 
 # 3. Restart application and workers
 echo "⚡ Restarting application services..."
-docker compose -f "${COMPOSE_FILE}" up -d --force-recreate app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler nginx
+docker compose -f "${COMPOSE_FILE}" up -d --force-recreate app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler
 
 # 4. Verify health
 echo "🏥 Running post-rollback health checks..."

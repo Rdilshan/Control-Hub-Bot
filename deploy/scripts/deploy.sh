@@ -49,7 +49,7 @@ echo "🗄️ Step 4: Applying Database Migrations (alembic upgrade head)..."
 
 # 6. Start/Update Application, Workers, and Scheduler
 echo "⚡ Step 5: Starting Application and Worker Services..."
-docker compose -f "${COMPOSE_FILE}" up -d app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler nginx
+docker compose -f "${COMPOSE_FILE}" up -d app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler
 
 # 7. Health and Readiness Checks
 echo "🏥 Step 6: Verifying Deployment Health & Readiness..."
