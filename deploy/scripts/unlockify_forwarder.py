@@ -63,6 +63,8 @@ class UnlockifyProxyHandler(http.server.BaseHTTPRequestHandler):
             method="POST",
         )
 
+        logger.info("POST %s incoming payload: %s", self.path, body.decode('utf-8', errors='replace') if body else '')
+
         try:
             with urllib.request.urlopen(req, timeout=30.0) as resp:
                 resp_body = resp.read()
@@ -72,7 +74,7 @@ class UnlockifyProxyHandler(http.server.BaseHTTPRequestHandler):
                         self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(resp_body)
-                logger.info("POST %s -> HTTP %s", self.path, resp.status)
+                logger.info("POST %s -> HTTP %s (Success: %s)", self.path, resp.status, resp_body.decode('utf-8', errors='replace'))
         except urllib.error.HTTPError as exc:
             err_body = exc.read()
             self.send_response(exc.code)
@@ -81,7 +83,7 @@ class UnlockifyProxyHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header(k, v)
             self.end_headers()
             self.wfile.write(err_body)
-            logger.warning("POST %s -> HTTP %s (Error body returned)", self.path, exc.code)
+            logger.warning("POST %s -> HTTP %s | Body: %s", self.path, exc.code, err_body.decode('utf-8', errors='replace'))
         except Exception as exc:
             logger.error("Failed to proxy request to %s: %s", target_url, exc)
             self.send_response(502)
