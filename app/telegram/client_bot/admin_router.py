@@ -57,7 +57,15 @@ class ClientAdminRouter:
                 status=bot_ctx.status,
             )
 
-        # 1. Check if Admin is in video intake or sponsor configuration state
+        # 1. Check if Admin is in video intake, sponsor configuration, or custom messages state
+        from app.telegram.client_bot.admin.custom_messages import (
+            WAITING_FOR_DEFAULT_MESSAGE,
+            WAITING_FOR_START_MESSAGE,
+            clear_messages_state,
+            get_messages_state,
+            handle_defaultmessage_command,
+            handle_startmessage_command,
+        )
         from app.telegram.client_bot.admin.sponsor import (
             WAITING_FOR_SPONSOR_URL,
             apply_sponsor_url,
@@ -65,6 +73,46 @@ class ClientAdminRouter:
             get_sponsor_state,
             handle_sponsor_command,
         )
+
+        messages_state = await get_messages_state(
+            client_bot_id=bot_ctx.client_bot_id,
+            telegram_user_id=actor.telegram_user_id,
+        )
+        if messages_state == WAITING_FOR_START_MESSAGE:
+            if cmd in ("/cancel", "cancel"):
+                await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+                await self.telegram_client.send_message(
+                    chat_id=actor.chat_id,
+                    text="❌ Custom start message setup cancelled.",
+                )
+                return {"ok": True, "action": "admin_startmessage_cancel"}
+            if not cmd.startswith("/"):
+                return await handle_startmessage_command(
+                    client_bot_id=bot_ctx.client_bot_id,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    text=f"/startmessage {text}",
+                    telegram_client=self.telegram_client,
+                    session=session,
+                )
+
+        if messages_state == WAITING_FOR_DEFAULT_MESSAGE:
+            if cmd in ("/cancel", "cancel"):
+                await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+                await self.telegram_client.send_message(
+                    chat_id=actor.chat_id,
+                    text="❌ Custom default message setup cancelled.",
+                )
+                return {"ok": True, "action": "admin_defaultmessage_cancel"}
+            if not cmd.startswith("/"):
+                return await handle_defaultmessage_command(
+                    client_bot_id=bot_ctx.client_bot_id,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    text=f"/defaultmessage {text}",
+                    telegram_client=self.telegram_client,
+                    session=session,
+                )
 
         sponsor_state = await get_sponsor_state(
             client_bot_id=bot_ctx.client_bot_id,
@@ -188,8 +236,33 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        # 9. Check /cancel outside session
+        # 9. Check /startmessage command
+        if cmd == "/startmessage" or cmd.startswith("/startmessage"):
+            from app.telegram.client_bot.admin.custom_messages import handle_startmessage_command
+            return await handle_startmessage_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                text=text,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 10. Check /defaultmessage command
+        if cmd == "/defaultmessage" or cmd.startswith("/defaultmessage"):
+            from app.telegram.client_bot.admin.custom_messages import handle_defaultmessage_command
+            return await handle_defaultmessage_command(
+                client_bot_id=bot_ctx.client_bot_id,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                text=text,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
+
+        # 11. Check /cancel outside session
         if cmd in ("/cancel", "cancel"):
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await self.telegram_client.send_message(
@@ -214,6 +287,7 @@ class ClientAdminRouter:
                     session=session,
                 )
 
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await self.telegram_client.send_message(
@@ -226,19 +300,6 @@ class ClientAdminRouter:
                 reply_markup=keyboards.admin_dashboard_keyboard(),
             )
             return {"ok": True, "action": "admin_start"}
-
-        # Built-in Admin Commands
-        admin_commands = {
-            "/startmessage": "💬 <b>Custom Start Message</b>\n\nCustomize the welcome message shown to new viewers.",
-            "/defaultmessage": "🔁 <b>Default Reply Message</b>\n\nCustomize the fallback response for unrecognized viewer messages.",
-        }
-
-        if cmd in admin_commands:
-            await self.telegram_client.send_message(
-                chat_id=actor.chat_id,
-                text=admin_commands[cmd],
-            )
-            return {"ok": True, "action": f"admin_cmd_{cmd.lstrip('/')}"}
 
         # Any other message sent by admin
         await self.telegram_client.send_message(
@@ -365,10 +426,17 @@ class ClientAdminRouter:
                 session=session,
             )
 
-        responses = {
-            "admin:messages": "💬 Send /startmessage or /defaultmessage to customize greetings.",
-        }
+        if cb_data.startswith("admin:messages") or cb_data.startswith("admin:startmessage") or cb_data.startswith("admin:defaultmessage"):
+            from app.telegram.client_bot.admin.custom_messages import handle_custom_messages_callback
+            return await handle_custom_messages_callback(
+                client_bot_id=bot_ctx.client_bot_id,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                callback_data=cb_data,
+                telegram_client=self.telegram_client,
+                session=session,
+            )
 
-        resp_text = responses.get(cb_data, "👑 Admin action received.")
+        resp_text = "👑 Admin action received."
         await self.telegram_client.send_message(chat_id=actor.chat_id, text=resp_text)
         return {"ok": True, "action": f"admin_callback_{cb_data}"}
