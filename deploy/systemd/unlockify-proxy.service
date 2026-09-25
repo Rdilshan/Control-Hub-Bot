@@ -1,0 +1,15 @@
+[Unit]
+Description=Unlockify Dual-Stack IPv6 Forwarder Proxy
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Control-Hub-Bot
+ExecStart=/usr/bin/python3 /root/Control-Hub-Bot/deploy/scripts/unlockify_forwarder.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
