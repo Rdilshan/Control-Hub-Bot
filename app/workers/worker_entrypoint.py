@@ -13,6 +13,7 @@ from app.workers.catchup_worker import CatchupWorker
 from app.workers.delivery_retry import process_delivery_retry_job
 from app.workers.lifecycle_worker import LifecycleWorker
 from app.workers.live_broadcast import LiveBroadcastWorker
+from app.workers.owner_message_campaign import OwnerMessageCampaignWorker
 from app.workers.maintenance import run_maintenance_recovery_cycle
 from app.workers.video_processing import VideoProcessingWorker
 
@@ -40,12 +41,15 @@ class BackgroundWorkerRunner:
 
                 async with AsyncSessionLocal() as session:
                     if self.queue_name in ("broadcast_live", "all"):
-                        bcast_worker = LiveBroadcastWorker(session)
-                        settings = get_settings()
-                        claim_limit = getattr(settings, "BROADCAST_WORKER_CLAIM_LIMIT", 5)
-                        jobs = await bcast_worker.claim_jobs(limit=claim_limit)
-                        for j in jobs:
-                            await bcast_worker.process_job(j.id)
+                        owner_worker = OwnerMessageCampaignWorker(session)
+                        owner_job = await owner_worker.claim_job()
+                        if owner_job:
+                            await owner_worker.process_job(owner_job.id)
+                        else:
+                            bcast_worker = LiveBroadcastWorker(session)
+                            jobs = await bcast_worker.claim_jobs(limit=1)
+                            for j in jobs:
+                                await bcast_worker.process_job(j.id)
 
                     if self.queue_name in ("video_processing", "all"):
                         video_worker = VideoProcessingWorker(session)

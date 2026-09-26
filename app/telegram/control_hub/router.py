@@ -94,6 +94,9 @@ class ControlHubRouter:
         # Check for /cancel command
         if text.lower() in ("/cancel", "cancel"):
             if is_owner:
+                from app.telegram.campaign_flow import clear_draft, get_draft
+                was_campaign = await get_draft("hub", user_id)
+                await clear_draft("hub", user_id)
                 try:
                     redis = get_redis()
                     await redis.delete(f"{SEARCH_STATE_PREFIX}{user_id}")
@@ -101,7 +104,7 @@ class ControlHubRouter:
                     pass
                 await self.telegram_client.send_message(
                     chat_id=chat_id,
-                    text="❌ Search cancelled.",
+                    text="Broadcast cancelled." if was_campaign else "❌ Search cancelled.",
                     reply_markup=keyboards.back_to_owner_home_keyboard(),
                 )
             else:
@@ -112,6 +115,12 @@ class ControlHubRouter:
                     reply_markup=keyboards.back_to_client_home_keyboard(),
                 )
             return {"ok": True, "action": "cancelled"}
+
+        if is_owner and not text.startswith("/"):
+            from app.telegram.control_hub import campaigns
+            draft_result = await campaigns.receive(user_id, chat_id, msg, self.telegram_client)
+            if draft_result:
+                return draft_result
 
         # Check Owner Pending Search State in Redis
         if is_owner and not text.startswith("/"):
@@ -321,6 +330,15 @@ class ControlHubRouter:
             return {"ok": True, "action": "client_home"}
 
         # --- Platform Owner Only Commands ---
+        if command in ("/sendbroadcast", "/campaigns"):
+            if not is_owner:
+                await self.telegram_client.send_message(chat_id, messages.unauthorized_message())
+                return {"ok": True, "action": "unauthorized"}
+            from app.telegram.control_hub import campaigns
+            if command == "/sendbroadcast":
+                return await campaigns.start(chat_id, self.telegram_client)
+            return await campaigns.list_campaigns(user_id, chat_id, self.telegram_client, owner_service.session)
+
         owner_commands = {
             "/clients",
             "/bots",
@@ -949,6 +967,10 @@ class ControlHubRouter:
     ) -> Dict[str, Any]:
         parts = data.split(":")
         section = parts[1] if len(parts) > 1 else ""
+
+        if section == "campaign":
+            from app.telegram.control_hub import campaigns
+            return await campaigns.callback(user_id, chat_id, data, self.telegram_client, owner_service.session)
 
         # --- 1. Clients Callbacks ---
         if section == "clients":

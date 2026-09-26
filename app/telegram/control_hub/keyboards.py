@@ -12,6 +12,7 @@ from app.db.models.client_bot import ClientBot
 def owner_home_keyboard() -> Dict[str, Any]:
     return {
         "inline_keyboard": [
+            [{"text": "Send Message", "callback_data": "owner:campaign:start"}],
             [
                 {"text": "👤 Clients", "callback_data": "owner:clients"},
                 {"text": "🤖 Bots", "callback_data": "owner:bots"},
@@ -259,6 +260,7 @@ def owner_queue_keyboard() -> Dict[str, Any]:
 def owner_broadcasts_summary_keyboard() -> Dict[str, Any]:
     return {
         "inline_keyboard": [
+            [{"text": "Send Message", "callback_data": "owner:campaign:start"}, {"text": "Custom Progress", "callback_data": "owner:campaign:list"}],
             [
                 {"text": "▶️ Running", "callback_data": "owner:broadcasts:running:1"},
                 {"text": "❌ Failed", "callback_data": "owner:broadcasts:failed:1"},

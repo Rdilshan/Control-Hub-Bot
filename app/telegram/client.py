@@ -375,6 +375,59 @@ class TelegramClient:
 
         return await self.request("sendVideo", json_data=payload)
 
+    async def send_content(
+        self, chat_id: int, content: Dict[str, Any], file_id: Optional[str] = None,
+        file_bytes: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        """Send a normalized campaign message, optionally uploading media bytes."""
+        from app.services.message_content import MEDIA_METHODS
+
+        kind = content["kind"]
+        if kind == "text":
+            payload = {"chat_id": chat_id, "text": content["text"]}
+            if content.get("entities"):
+                payload["entities"] = content["entities"]
+            return await self.request("sendMessage", json_data=payload)
+
+        method = MEDIA_METHODS[kind]
+        payload = {"chat_id": chat_id}
+        if kind != "sticker":
+            if content.get("caption"):
+                payload["caption"] = content["caption"]
+            if content.get("caption_entities"):
+                payload["caption_entities"] = content["caption_entities"]
+        if file_bytes is None:
+            payload[kind] = file_id or content["file_id"]
+            return await self.request(method, json_data=payload)
+
+        import json
+        form = {"chat_id": str(chat_id)}
+        if payload.get("caption"):
+            form["caption"] = payload["caption"]
+        if payload.get("caption_entities"):
+            form["caption_entities"] = json.dumps(payload["caption_entities"])
+        client = self._client or httpx.AsyncClient(timeout=self.timeout)
+        try:
+            response = await client.post(
+                self._get_url(method), data=form,
+                files={kind: (content.get("file_name", f"campaign.{kind}"), file_bytes, content.get("mime_type", "application/octet-stream"))},
+            )
+            data = response.json()
+        except httpx.RequestError as exc:
+            raise TelegramNetworkError(f"Campaign upload failed: {exc}") from exc
+        finally:
+            if self._client is None:
+                await client.aclose()
+        if not data.get("ok"):
+            code = data.get("error_code", response.status_code)
+            description = data.get("description", "Telegram upload failed")
+            if code == 403:
+                raise TelegramForbiddenError(description)
+            if code == 429:
+                raise TelegramRateLimitError(description, retry_after=data.get("parameters", {}).get("retry_after", 30))
+            raise TelegramAPIError(description, error_code=code)
+        return data.get("result", {})
+
 
 async def validate_bot_token(
     token: str,

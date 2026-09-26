@@ -4,11 +4,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from app.core.enums import BroadcastStatus, JobStatus, JobType, enum_val
 from app.core.utils import utc_now
 from app.db.models.background_job import BackgroundJob
 from app.db.models.broadcast import Broadcast
 from app.db.models.client_bot import ClientBot
+from app.db.models.platform_owner import PlatformOwner
 from app.repositories.base import BaseRepository
 
 
@@ -101,7 +103,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
     async def create_broadcast_job(
         self,
         broadcast_id: int,
-        video_id: int,
+        video_id: Optional[int],
         client_bot_id: int,
         client_id: Optional[int] = None,
         queue_name: str = "broadcast_live",
@@ -126,6 +128,41 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
             priority=priority,
             deduplication_key=f"live-broadcast:{broadcast_id}",
         )
+
+    async def claim_owner_campaign_job(self) -> Optional[BackgroundJob]:
+        # Serialize claims through one stable row because all owner campaigns use one bot token.
+        await self.session.execute(
+            select(PlatformOwner.id).order_by(PlatformOwner.id).limit(1).with_for_update()
+        )
+        running = (await self.session.execute(
+            select(BackgroundJob.id).where(
+                BackgroundJob.job_type == JobType.OWNER_MESSAGE_CAMPAIGN,
+                BackgroundJob.status == JobStatus.RUNNING,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if running is not None:
+            return None
+        stmt = (
+            select(BackgroundJob)
+            .where(
+                BackgroundJob.job_type == JobType.OWNER_MESSAGE_CAMPAIGN,
+                BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.RETRYING]),
+                BackgroundJob.available_at <= utc_now(),
+            )
+            .order_by(BackgroundJob.available_at, BackgroundJob.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        job = (await self.session.execute(stmt)).scalar_one_or_none()
+        if job:
+            now = utc_now()
+            job.status = JobStatus.RUNNING
+            job.started_at = now
+            job.last_heartbeat_at = now
+            job.last_attempt_at = now
+            job.attempt_count += 1
+            await self.session.flush()
+        return job
 
     async def get_pending_jobs(
         self,
@@ -183,6 +220,17 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
         """
         now = utc_now()
         candidate_limit = max(limit * 5, limit)
+        other_running = aliased(Broadcast)
+        blocked_by_running = (
+            select(other_running.id)
+            .where(
+                other_running.client_bot_id == Broadcast.client_bot_id,
+                other_running.broadcast_type == "LIVE",
+                other_running.status == BroadcastStatus.RUNNING,
+                other_running.id != Broadcast.id,
+            )
+            .exists()
+        )
         stmt = (
             select(BackgroundJob)
             .join(Broadcast, BackgroundJob.broadcast_id == Broadcast.id)
@@ -192,6 +240,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
                 BackgroundJob.available_at <= now,
                 Broadcast.broadcast_type == "LIVE",
                 Broadcast.status.in_([BroadcastStatus.PENDING, BroadcastStatus.QUEUED, BroadcastStatus.RUNNING]),
+                ~blocked_by_running,
             )
             .order_by(BackgroundJob.priority.desc(), BackgroundJob.available_at.asc(), BackgroundJob.id.asc())
             .limit(candidate_limit)

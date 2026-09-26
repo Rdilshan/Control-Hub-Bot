@@ -23,6 +23,7 @@ def admin_dashboard_keyboard() -> Dict[str, Any]:
                 {"text": "🔓 Sponsor Config", "callback_data": "admin:sponsor"},
                 {"text": "💬 Custom Messages", "callback_data": "admin:messages"},
             ],
+            [{"text": "Send Message", "callback_data": "admin:campaign:new"}],
         ]
     }
 

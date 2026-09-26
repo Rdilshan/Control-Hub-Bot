@@ -74,6 +74,13 @@ JOB_TYPE_POLICIES: Dict[JobType, RetryPolicy] = {
         backoff_multiplier=2.0,
         jitter=True,
     ),
+    JobType.OWNER_MESSAGE_CAMPAIGN: RetryPolicy(
+        max_attempts=10,
+        base_delay=10.0,
+        max_delay=900.0,
+        backoff_multiplier=2.0,
+        jitter=True,
+    ),
     JobType.LIVE_BROADCAST: RetryPolicy(
         max_attempts=10,
         base_delay=10.0,

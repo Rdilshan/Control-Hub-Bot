@@ -29,6 +29,7 @@ ADMIN_COMMANDS: Set[str] = {
     "/processing",
     "/users",
     "/broadcasts",
+    "/sendbroadcast",
     "/sponsor",
     "/startmessage",
     "/defaultmessage",

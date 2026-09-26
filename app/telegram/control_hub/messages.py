@@ -339,12 +339,13 @@ def owner_broadcast_detail_message(detail: Dict[str, Any]) -> str:
     pct = (b.sent_count * 100 // b.total_targets) if b.total_targets > 0 else 0
     started_str = b.started_at.strftime("%Y-%m-%d %H:%M UTC") if b.started_at else "Not started"
     completed_str = b.completed_at.strftime("%Y-%m-%d %H:%M UTC") if b.completed_at else "In progress"
+    content_line = f"• Video ID: <code>#{b.video_id}</code>\n" if b.video_id else f"• Custom campaign: <code>#{b.campaign_id}</code>\n"
 
     return (
         "📤 <b>Broadcast Details</b>\n\n"
         f"• Broadcast ID: <code>#{b.id}</code>\n"
         f"• Bot: <b>{bot_handle}</b>\n"
-        f"• Video ID: <code>#{b.video_id}</code>\n"
+        f"{content_line}"
         f"• Status: {status_icon} <b>{b_status}</b> ({pct}%)\n\n"
         f"• 🎯 Total Targets: <b>{fmt_num(b.total_targets)}</b>\n"
         f"• ✅ Sent: <b>{fmt_num(b.sent_count)}</b>\n"

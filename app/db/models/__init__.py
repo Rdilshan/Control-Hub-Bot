@@ -13,6 +13,7 @@ from app.db.models.video_processing import VideoProcessing
 from app.db.models.unlock_link import UnlockLink
 from app.db.models.broadcast import Broadcast
 from app.db.models.broadcast_delivery import BroadcastDelivery
+from app.db.models.message_campaign import MessageCampaign, CampaignClientDelivery
 from app.db.models.catchup_delivery import CatchupDelivery
 from app.db.models.viewer_catchup import ViewerCatchup
 from app.db.models.video_delivery import VideoDelivery
@@ -34,6 +35,8 @@ __all__ = [
     "UnlockLink",
     "Broadcast",
     "BroadcastDelivery",
+    "MessageCampaign",
+    "CampaignClientDelivery",
     "CatchupDelivery",
     "ViewerCatchup",
     "VideoDelivery",
@@ -41,4 +44,3 @@ __all__ = [
     "BotEvent",
     "ProcessedTelegramUpdate",
 ]
-

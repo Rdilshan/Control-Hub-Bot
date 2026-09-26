@@ -8,8 +8,10 @@ from app.core.enums import BroadcastStatus, DeliveryStatus
 from app.core.security import decrypt_bot_token
 from app.core.utils import utc_now
 from app.db.models.broadcast import Broadcast
+from app.db.models.message_campaign import MessageCampaign
 from app.db.models.client_bot import ClientBot
 from app.db.models.video import Video
+from app.db.models.viewer import Viewer
 from app.db.models.video_processing import VideoProcessing
 from app.logging_config import logger
 from app.repositories.broadcast import BroadcastRepository
@@ -18,6 +20,9 @@ from app.repositories.viewer import ViewerRepository
 from app.services.broadcast_audience_service import BroadcastAudienceService
 from app.services.broadcast_delivery_service import BroadcastDeliveryService
 from app.telegram.client import TelegramClient
+from app.telegram.errors import TelegramForbiddenError, TelegramRateLimitError
+from app.services.message_content import validate_cross_bot_content
+from app.repositories.job import BackgroundJobRepository
 
 
 class BroadcastService:
@@ -42,6 +47,7 @@ class BroadcastService:
             delivery_repo=self.delivery_repo,
             viewer_repo=self.viewer_repo,
         )
+        self._campaign_media_bytes: Dict[int, bytes] = {}
 
     async def run_broadcast(
         self,
@@ -72,16 +78,15 @@ class BroadcastService:
             logger.info("Broadcast id=%d is already %s. Skipping.", broadcast_id, broadcast.status)
             return {"ok": True, "status": broadcast.status, "message": "Already terminal"}
 
-        # 2. Fetch related Video and ClientBot
-        video_stmt = select(Video).where(Video.id == broadcast.video_id)
-        video_res = await self.session.execute(video_stmt)
-        video = video_res.scalar_one_or_none()
+        # 2. Fetch related content and ClientBot
+        campaign = await self.session.get(MessageCampaign, broadcast.campaign_id) if broadcast.campaign_id else None
+        video = await self.session.get(Video, broadcast.video_id) if broadcast.video_id else None
 
         bot_stmt = select(ClientBot).where(ClientBot.id == broadcast.client_bot_id)
         bot_res = await self.session.execute(bot_stmt)
         client_bot = bot_res.scalar_one_or_none()
 
-        if not video or not client_bot:
+        if not (video or campaign) or not client_bot:
             error_msg = f"Missing related entities: video={bool(video)}, client_bot={bool(client_bot)}"
             logger.error(error_msg)
             await self.broadcast_repo.mark_failed(broadcast_id, "MISSING_ENTITIES", error_msg)
@@ -89,16 +94,19 @@ class BroadcastService:
             return {"ok": False, "error": "MISSING_ENTITIES", "message": error_msg}
 
         # 3. Preflight validation
-        proc_stmt = select(VideoProcessing).where(VideoProcessing.video_id == video.id)
-        proc_res = await self.session.execute(proc_stmt)
-        video_proc = proc_res.scalar_one_or_none()
-
-        is_valid, preflight_error = self.delivery_service.preflight_broadcast(
-            broadcast=broadcast,
-            video=video,
-            client_bot=client_bot,
-            video_processing=video_proc,
-        )
+        if video:
+            proc_stmt = select(VideoProcessing).where(VideoProcessing.video_id == video.id)
+            proc_res = await self.session.execute(proc_stmt)
+            video_proc = proc_res.scalar_one_or_none()
+            is_valid, preflight_error = self.delivery_service.preflight_broadcast(
+                broadcast=broadcast, video=video, client_bot=client_bot,
+                video_processing=video_proc,
+            )
+        else:
+            video_proc = None
+            from app.core.enums import ClientBotStatus
+            is_valid = bool(campaign and client_bot.status == ClientBotStatus.ACTIVE and client_bot.token_encrypted)
+            preflight_error = None if is_valid else "Client bot or custom message is unavailable"
         if not is_valid:
             logger.error("Broadcast id=%d preflight failed: %s", broadcast_id, preflight_error)
             await self.broadcast_repo.mark_failed(
@@ -147,20 +155,28 @@ class BroadcastService:
         )
         bot_token = decrypt_bot_token(encrypted_token)
 
-        proc_stmt = select(VideoProcessing).where(VideoProcessing.video_id == video.id)
-        proc_res = await self.session.execute(proc_stmt)
-        video_proc = proc_res.scalar_one_or_none()
+        if campaign and campaign.source_bot == "HUB" and campaign.content["kind"] != "text" and not broadcast.staged_file_id:
+            try:
+                source = TelegramClient(get_settings().CONTROL_HUB_BOT_TOKEN)
+                file_info = await source.get_file(campaign.content["file_id"])
+                validate_cross_bot_content({**campaign.content, "file_size": file_info.get("file_size", 0)})
+                media_bytes = await source.download_file(file_info["file_path"])
+                validate_cross_bot_content({**campaign.content, "file_size": len(media_bytes)})
+                self._campaign_media_bytes[broadcast.id] = media_bytes
+            except Exception as exc:
+                await self.broadcast_repo.mark_failed(broadcast_id, "MEDIA_UNAVAILABLE", str(exc))
+                await self.session.commit()
+                return {"ok": False, "error": "MEDIA_UNAVAILABLE", "message": str(exc)}
 
         preview_photo_file_id = (
-            getattr(video, "preview_photo_file_id", None)
-            or (video_proc.thumbnail_file_id if video_proc else None)
+            (getattr(video, "preview_photo_file_id", None) or (video_proc.thumbnail_file_id if video_proc else None))
+            if video else None
         )
         unlock_url = (
-            getattr(video, "unlock_url", None)
-            or (video_proc.unlock_url if video_proc else None)
+            (getattr(video, "unlock_url", None) or (video_proc.unlock_url if video_proc else None))
+            if video else None
         )
-
-        caption = self.delivery_service.build_preview_caption(video)
+        caption = self.delivery_service.build_preview_caption(video) if video else None
         cursor = broadcast.last_processed_viewer_id or 0
         max_id = broadcast.audience_max_viewer_id
 
@@ -191,16 +207,17 @@ class BroadcastService:
             blocked_delta = 0
 
             for viewer in viewers:
-                status, msg_id, err_code, err_msg = await self.delivery_service.send_preview_to_viewer(
-                    client_bot_id=client_bot.id,
-                    bot_token=bot_token,
-                    viewer=viewer,
-                    broadcast_id=broadcast_id,
-                    preview_photo_file_id=preview_photo_file_id,
-                    unlock_url=unlock_url,
-                    caption=caption,
-                    telegram_client=telegram_client,
-                )
+                if campaign:
+                    status, msg_id, err_code, err_msg = await self._send_campaign_to_viewer(
+                        campaign, broadcast, viewer, bot_token, telegram_client,
+                    )
+                else:
+                    status, msg_id, err_code, err_msg = await self.delivery_service.send_preview_to_viewer(
+                        client_bot_id=client_bot.id, bot_token=bot_token,
+                        viewer=viewer, broadcast_id=broadcast_id,
+                        preview_photo_file_id=preview_photo_file_id, unlock_url=unlock_url,
+                        caption=caption, telegram_client=telegram_client,
+                    )
 
                 if status == DeliveryStatus.SENT:
                     sent_delta += 1
@@ -219,6 +236,9 @@ class BroadcastService:
                 blocked_delta=blocked_delta,
                 last_processed_viewer_id=cursor,
             )
+            job = await self.job_repo_for_heartbeat(broadcast_id)
+            if job:
+                await BackgroundJobRepository(self.session).update_heartbeat(job.id)
             await self.session.commit()
 
         # 8. Mark completed
@@ -237,6 +257,7 @@ class BroadcastService:
             final_broadcast.blocked_count if final_broadcast else 0,
             final_broadcast.total_targets if final_broadcast else 0,
         )
+        self._campaign_media_bytes.pop(broadcast_id, None)
 
         return {
             "ok": True,
@@ -247,6 +268,45 @@ class BroadcastService:
             "failed_count": final_broadcast.failed_count if final_broadcast else 0,
             "blocked_count": final_broadcast.blocked_count if final_broadcast else 0,
         }
+
+    async def job_repo_for_heartbeat(self, broadcast_id: int):
+        return await BackgroundJobRepository(self.session).get_active_for_broadcast(broadcast_id)
+
+    async def _send_campaign_to_viewer(self, campaign, broadcast, viewer, bot_token, telegram_client=None):
+        existing = await self.delivery_repo.get_by_broadcast_and_viewer(broadcast.id, viewer.id)
+        if existing and existing.status == DeliveryStatus.SENT:
+            return DeliveryStatus.SENT, existing.telegram_message_id, None, None
+        await self.delivery_service.rate_limiter.acquire(broadcast.client_bot_id)
+        client = telegram_client or TelegramClient(bot_token)
+        content = campaign.content
+        try:
+            file_bytes = self._campaign_media_bytes.get(broadcast.id) if not broadcast.staged_file_id else None
+            result = await client.send_content(
+                chat_id=viewer.telegram_user_id, content=content,
+                file_id=broadcast.staged_file_id if campaign.source_bot == "HUB" else None,
+                file_bytes=file_bytes,
+            )
+            if file_bytes is not None:
+                media = result.get(content["kind"])
+                if content["kind"] == "photo":
+                    media = media[-1] if media else None
+                if isinstance(media, dict):
+                    broadcast.staged_file_id = media.get("file_id")
+                    if broadcast.staged_file_id:
+                        self._campaign_media_bytes.pop(broadcast.id, None)
+            await self.delivery_repo.record_delivery(broadcast.id, viewer.id, DeliveryStatus.SENT, telegram_message_id=result.get("message_id"))
+            return DeliveryStatus.SENT, result.get("message_id"), None, None
+        except TelegramForbiddenError as exc:
+            await self.viewer_repo.mark_blocked(broadcast.client_bot_id, viewer.telegram_user_id)
+            await self.delivery_repo.record_delivery(broadcast.id, viewer.id, DeliveryStatus.BLOCKED, error_code="TELEGRAM_FORBIDDEN", error_message=str(exc))
+            return DeliveryStatus.BLOCKED, None, "TELEGRAM_FORBIDDEN", str(exc)
+        except TelegramRateLimitError as exc:
+            self.delivery_service.rate_limiter.pause_bot(broadcast.client_bot_id, exc.retry_after)
+            await self.delivery_repo.record_delivery(broadcast.id, viewer.id, DeliveryStatus.FAILED, error_code="RATE_LIMITED", error_message=str(exc))
+            return DeliveryStatus.FAILED, None, "RATE_LIMITED", str(exc)
+        except Exception as exc:
+            await self.delivery_repo.record_delivery(broadcast.id, viewer.id, DeliveryStatus.FAILED, error_code=type(exc).__name__, error_message=str(exc))
+            return DeliveryStatus.FAILED, None, type(exc).__name__, str(exc)
 
     async def retry_failed_deliveries(
         self,
@@ -259,6 +319,25 @@ class BroadcastService:
         broadcast = await self.broadcast_repo.get_by_id(broadcast_id)
         if not broadcast:
             return {"ok": False, "error": "BROADCAST_NOT_FOUND"}
+
+        campaign = await self.session.get(MessageCampaign, broadcast.campaign_id) if broadcast.campaign_id else None
+        if campaign:
+            bot = await self.session.get(ClientBot, broadcast.client_bot_id)
+            if not bot:
+                return {"ok": False, "error": "MISSING_BOT"}
+            token = decrypt_bot_token(bot.token_encrypted)
+            deliveries = await self.delivery_repo.get_retryable_failed_deliveries(broadcast_id, max_attempts, limit)
+            recovered = 0
+            for delivery in deliveries:
+                viewer = await self.session.get(Viewer, delivery.viewer_id)
+                if not viewer:
+                    continue
+                status, _, _, _ = await self._send_campaign_to_viewer(campaign, broadcast, viewer, token, telegram_client)
+                if status == DeliveryStatus.SENT:
+                    recovered += 1
+                    await self.broadcast_repo.update_progress_and_cursor(broadcast_id, sent_delta=1, failed_delta=-1)
+            await self.session.commit()
+            return {"ok": True, "broadcast_id": broadcast_id, "retried_count": len(deliveries), "recovered_count": recovered}
 
         video_stmt = select(Video).where(Video.id == broadcast.video_id)
         video_res = await self.session.execute(video_stmt)

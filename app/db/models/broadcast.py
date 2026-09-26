@@ -17,12 +17,14 @@ class Broadcast(Base, IntegerIdMixin, TimestampMixin):
         index=True,
         nullable=False,
     )
-    video_id: Mapped[int] = mapped_column(
+    video_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("videos.id", ondelete="RESTRICT"),
         index=True,
-        nullable=False,
+        nullable=True,
     )
+    campaign_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("message_campaigns.id", ondelete="SET NULL"), index=True, nullable=True)
+    staged_file_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     created_by_admin_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("client_bot_admins.id", ondelete="SET NULL"),
@@ -66,7 +68,7 @@ class Broadcast(Base, IntegerIdMixin, TimestampMixin):
 
     # Relationships
     bot: Mapped["ClientBot"] = relationship("ClientBot", back_populates="broadcasts")
-    video: Mapped["Video"] = relationship("Video", back_populates="broadcasts")
+    video: Mapped[Optional["Video"]] = relationship("Video", back_populates="broadcasts")
     deliveries: Mapped[List["BroadcastDelivery"]] = relationship(
         "BroadcastDelivery",
         back_populates="broadcast",

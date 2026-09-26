@@ -57,6 +57,23 @@ class ClientAdminRouter:
                 status=bot_ctx.status,
             )
 
+        from app.telegram.client_bot.admin import campaigns
+        from app.telegram.campaign_flow import clear_draft, get_draft
+        if cmd == "/sendbroadcast":
+            if not await campaigns.owner_allowed(session, actor.admin_record_id, bot_ctx.client_bot_id):
+                await self.telegram_client.send_message(actor.chat_id, "Only this bot's owner can send broadcasts.")
+                return {"ok": True, "action": "campaign_denied"}
+            return await campaigns.start(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client, session)
+        draft = await get_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+        if draft:
+            if cmd in ("/cancel", "cancel", "/start"):
+                await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+                if cmd != "/start":
+                    await self.telegram_client.send_message(actor.chat_id, "Broadcast cancelled.")
+                    return {"ok": True, "action": "campaign_cancelled"}
+            elif not cmd.startswith("/") and await campaigns.owner_allowed(session, actor.admin_record_id, bot_ctx.client_bot_id):
+                return await campaigns.receive(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, actor_data.get("raw_message") or {}, self.telegram_client)
+
         # 1. Check if Admin is in video intake, sponsor configuration, or custom messages state
         from app.telegram.client_bot.admin.custom_messages import (
             WAITING_FOR_DEFAULT_MESSAGE,
@@ -349,6 +366,13 @@ class ClientAdminRouter:
                 telegram_client=self.telegram_client,
                 session=session,
             )
+
+        if cb_data.startswith("admin:campaign:"):
+            from app.telegram.client_bot.admin import campaigns
+            if not await campaigns.owner_allowed(session, actor.admin_record_id, bot_ctx.client_bot_id):
+                await self.telegram_client.send_message(actor.chat_id, "Only this bot's owner can send broadcasts.")
+                return {"ok": True, "action": "campaign_denied"}
+            return await campaigns.callback(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, cb_data, self.telegram_client, session)
 
         if cb_data == "admin:videos":
             from app.telegram.client_bot.admin.videos import handle_videos_command

@@ -118,6 +118,7 @@ class JobType(str, Enum):
     CREATE_UNLOCK_LINK = "CREATE_UNLOCK_LINK"
     UNLOCKIFY_CREATE_LINK = "UNLOCKIFY_CREATE_LINK"
     BROADCAST = "BROADCAST"
+    OWNER_MESSAGE_CAMPAIGN = "OWNER_MESSAGE_CAMPAIGN"
     LIVE_BROADCAST = "LIVE_BROADCAST"
     CATCHUP = "CATCHUP"
     CATCHUP_BATCH = "CATCHUP_BATCH"
@@ -211,5 +212,4 @@ def enum_val(v: object) -> str:
     if hasattr(v, "value"):
         return str(v.value)
     return str(v)
-
 
