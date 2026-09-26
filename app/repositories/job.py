@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import JobStatus, JobType, enum_val
+from app.core.enums import BroadcastStatus, JobStatus, JobType, enum_val
 from app.core.utils import utc_now
 from app.db.models.background_job import BackgroundJob
+from app.db.models.broadcast import Broadcast
+from app.db.models.client_bot import ClientBot
 from app.repositories.base import BaseRepository
 
 
@@ -171,6 +173,96 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
             job.queued_at = now
         await self.session.flush()
         return jobs
+
+    async def claim_runnable_broadcast_jobs(self, limit: int = 5) -> List[BackgroundJob]:
+        """Claims runnable LIVE broadcast jobs while enforcing one active broadcast per bot.
+
+        The client_bot row is locked before the active-broadcast check so multiple
+        workers can safely claim jobs for different bots without claiming two
+        LIVE broadcasts for the same bot.
+        """
+        now = utc_now()
+        candidate_limit = max(limit * 5, limit)
+        stmt = (
+            select(BackgroundJob)
+            .join(Broadcast, BackgroundJob.broadcast_id == Broadcast.id)
+            .where(
+                BackgroundJob.job_type == JobType.BROADCAST,
+                BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.RETRYING]),
+                BackgroundJob.available_at <= now,
+                Broadcast.broadcast_type == "LIVE",
+                Broadcast.status.in_([BroadcastStatus.PENDING, BroadcastStatus.QUEUED, BroadcastStatus.RUNNING]),
+            )
+            .order_by(BackgroundJob.priority.desc(), BackgroundJob.available_at.asc(), BackgroundJob.id.asc())
+            .limit(candidate_limit)
+            .with_for_update(skip_locked=True, of=BackgroundJob)
+        )
+        result = await self.session.execute(stmt)
+        candidates = list(result.scalars().all())
+
+        claimed: List[BackgroundJob] = []
+        claimed_bot_ids: set[int] = set()
+
+        for job in candidates:
+            if len(claimed) >= limit:
+                break
+            if not job.client_bot_id or not job.broadcast_id:
+                continue
+            if job.client_bot_id in claimed_bot_ids:
+                continue
+
+            bot_lock_stmt = (
+                select(ClientBot.id)
+                .where(ClientBot.id == job.client_bot_id)
+                .with_for_update()
+            )
+            await self.session.execute(bot_lock_stmt)
+
+            running_stmt = (
+                select(Broadcast.id)
+                .where(
+                    Broadcast.client_bot_id == job.client_bot_id,
+                    Broadcast.broadcast_type == "LIVE",
+                    Broadcast.status == BroadcastStatus.RUNNING,
+                    Broadcast.id != job.broadcast_id,
+                )
+                .limit(1)
+            )
+            running_res = await self.session.execute(running_stmt)
+            if running_res.scalar_one_or_none() is not None:
+                continue
+
+            broadcast_stmt = (
+                select(Broadcast)
+                .where(Broadcast.id == job.broadcast_id)
+                .with_for_update()
+            )
+            broadcast_res = await self.session.execute(broadcast_stmt)
+            broadcast = broadcast_res.scalar_one_or_none()
+            if not broadcast or broadcast.client_bot_id != job.client_bot_id:
+                continue
+            if broadcast.status not in (
+                BroadcastStatus.PENDING,
+                BroadcastStatus.QUEUED,
+                BroadcastStatus.RUNNING,
+            ):
+                continue
+
+            job.status = JobStatus.RUNNING
+            job.started_at = now
+            job.last_attempt_at = now
+            job.last_heartbeat_at = now
+            job.attempt_count += 1
+
+            broadcast.status = BroadcastStatus.RUNNING
+            if not broadcast.started_at:
+                broadcast.started_at = now
+
+            claimed_bot_ids.add(job.client_bot_id)
+            claimed.append(job)
+
+        await self.session.flush()
+        return claimed
 
     async def get_active_for_video(self, video_id: int) -> Optional[BackgroundJob]:
         """Gets active background job (PENDING, QUEUED, RUNNING, RETRYING) for a video."""

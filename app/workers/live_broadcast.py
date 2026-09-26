@@ -3,8 +3,10 @@
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.config import get_settings
 from app.core.enums import JobStatus, JobType
 from app.db.models.background_job import BackgroundJob
+from app.db.models.broadcast import Broadcast
 from app.logging_config import logger
 from app.repositories.job import BackgroundJobRepository
 from app.services.broadcast_service import BroadcastService
@@ -36,6 +38,14 @@ class LiveBroadcastWorker:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def claim_jobs(self, limit: Optional[int] = None) -> List[BackgroundJob]:
+        """Claims runnable broadcast jobs with multi-worker and per-bot safety."""
+        settings = get_settings()
+        claim_limit = limit or getattr(settings, "BROADCAST_WORKER_CLAIM_LIMIT", 5)
+        jobs = await self.job_repo.claim_runnable_broadcast_jobs(limit=claim_limit)
+        await self.session.commit()
+        return jobs
+
     async def process_job(self, job_id: int) -> Dict[str, Any]:
         """Executes a single LIVE broadcast background job."""
         job = await self.job_repo.get_by_id(job_id)
@@ -50,8 +60,18 @@ class LiveBroadcastWorker:
             await self.session.commit()
             return {"ok": False, "error": "MISSING_BROADCAST_ID"}
 
-        await self.job_repo.mark_running(job_id)
-        await self.session.commit()
+        if job.status != JobStatus.RUNNING:
+            await self.job_repo.mark_running(job_id)
+            broadcast = await self.session.get(Broadcast, broadcast_id)
+            if broadcast:
+                from app.core.enums import BroadcastStatus
+
+                broadcast.status = BroadcastStatus.RUNNING
+                if not broadcast.started_at:
+                    from app.core.utils import utc_now
+
+                    broadcast.started_at = utc_now()
+            await self.session.commit()
 
         try:
             result = await self.service.run_broadcast(broadcast_id)

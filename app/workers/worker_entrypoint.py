@@ -5,6 +5,7 @@ import asyncio
 import signal
 from typing import Optional
 from app.db.session import AsyncSessionLocal
+from app.config import get_settings
 from app.logging_config import logger
 from app.redis.client import get_redis_client
 from app.services.system_monitoring_service import SystemMonitoringService
@@ -40,7 +41,9 @@ class BackgroundWorkerRunner:
                 async with AsyncSessionLocal() as session:
                     if self.queue_name in ("broadcast_live", "all"):
                         bcast_worker = LiveBroadcastWorker(session)
-                        jobs = await bcast_worker.get_pending_jobs(limit=5)
+                        settings = get_settings()
+                        claim_limit = getattr(settings, "BROADCAST_WORKER_CLAIM_LIMIT", 5)
+                        jobs = await bcast_worker.claim_jobs(limit=claim_limit)
                         for j in jobs:
                             await bcast_worker.process_job(j.id)
 

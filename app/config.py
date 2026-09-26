@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     TELEGRAM_BROADCAST_RATE_PER_SECOND: float = 25.0
     BROADCAST_BATCH_SIZE: int = 500
     BROADCAST_MAX_RETRY_ATTEMPTS: int = 3
+    BROADCAST_WORKER_CLAIM_LIMIT: int = 5
+    MAX_ACTIVE_LIVE_BROADCASTS_PER_BOT: int = 1
     CATCHUP_BATCH_SIZE: int = 10
     CATCHUP_BATCH_DELAY_SECONDS: float = 86_400.0  # 1 day between historical catch-up batches
     MAX_ACTIVE_CATCHUP_VIEWERS_PER_BOT: int = 5

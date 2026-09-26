@@ -1,6 +1,7 @@
 """Unit tests for BroadcastAudienceService, TelegramBroadcastRateLimiter, BroadcastDeliveryService, BroadcastScheduler, BroadcastService, and Workers."""
 
 import asyncio
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -17,6 +18,7 @@ from app.core.enums import (
     ViewerStatus,
 )
 from app.core.security import encrypt_token
+from app.core.utils import utc_now
 from app.db.base import Base
 from app.db.models.background_job import BackgroundJob
 from app.db.models.broadcast import Broadcast
@@ -529,6 +531,148 @@ async def test_live_broadcast_worker(db_session: AsyncSession, sample_setup):
 
     updated_job = await job_repo.get_by_id(job.id)
     assert updated_job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_broadcast_claim_allows_only_one_live_per_bot(db_session: AsyncSession, sample_setup):
+    bot = sample_setup["bot"]
+    video = sample_setup["video"]
+    first_broadcast = sample_setup["broadcast"]
+
+    second_broadcast = Broadcast(
+        client_bot_id=bot.id,
+        video_id=video.id,
+        broadcast_type="LIVE",
+        status=BroadcastStatus.QUEUED,
+        total_targets=5,
+    )
+    db_session.add(second_broadcast)
+    await db_session.flush()
+
+    job_repo = BackgroundJobRepository(db_session)
+    first_job = await job_repo.create_broadcast_job(
+        broadcast_id=first_broadcast.id,
+        video_id=video.id,
+        client_bot_id=bot.id,
+        client_id=sample_setup["client"].id,
+    )
+    second_job = await job_repo.create_broadcast_job(
+        broadcast_id=second_broadcast.id,
+        video_id=video.id,
+        client_bot_id=bot.id,
+        client_id=sample_setup["client"].id,
+    )
+    await db_session.commit()
+
+    claimed = await job_repo.claim_runnable_broadcast_jobs(limit=5)
+
+    assert len(claimed) == 1
+    assert claimed[0].id == first_job.id
+    assert claimed[0].status == JobStatus.RUNNING
+
+    updated_first_broadcast = await db_session.get(Broadcast, first_broadcast.id)
+    updated_second_broadcast = await db_session.get(Broadcast, second_broadcast.id)
+    updated_second_job = await job_repo.get_by_id(second_job.id)
+    assert updated_first_broadcast.status == BroadcastStatus.RUNNING
+    assert updated_second_broadcast.status == BroadcastStatus.QUEUED
+    assert updated_second_job.status == JobStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_broadcast_claim_allows_parallel_different_bots(db_session: AsyncSession, sample_setup):
+    job_repo = BackgroundJobRepository(db_session)
+    first_job = await job_repo.create_broadcast_job(
+        broadcast_id=sample_setup["broadcast"].id,
+        video_id=sample_setup["video"].id,
+        client_bot_id=sample_setup["bot"].id,
+        client_id=sample_setup["client"].id,
+    )
+
+    second_client = Client(telegram_user_id=54321, username="second_client", status=ClientStatus.ACTIVE)
+    db_session.add(second_client)
+    await db_session.flush()
+
+    second_bot = ClientBot(
+        client_id=second_client.id,
+        username="second_bot",
+        telegram_bot_id=987654321,
+        token_encrypted=encrypt_token("987654321:ABCdefGhIJKlmNoPQRsTUVwxyZ"),
+        status=ClientBotStatus.ACTIVE,
+    )
+    db_session.add(second_bot)
+    await db_session.flush()
+
+    second_video = Video(
+        client_bot_id=second_bot.id,
+        caption="Second bot clip",
+        status=VideoStatus.READY,
+        telegram_file_id="second_file",
+        telegram_file_unique_id="second_unique",
+    )
+    db_session.add(second_video)
+    await db_session.flush()
+
+    second_broadcast = Broadcast(
+        client_bot_id=second_bot.id,
+        video_id=second_video.id,
+        broadcast_type="LIVE",
+        status=BroadcastStatus.QUEUED,
+        total_targets=0,
+    )
+    db_session.add(second_broadcast)
+    await db_session.flush()
+
+    second_job = await job_repo.create_broadcast_job(
+        broadcast_id=second_broadcast.id,
+        video_id=second_video.id,
+        client_bot_id=second_bot.id,
+        client_id=second_client.id,
+    )
+    await db_session.commit()
+
+    claimed = await job_repo.claim_runnable_broadcast_jobs(limit=5)
+    claimed_ids = {job.id for job in claimed}
+
+    assert claimed_ids == {first_job.id, second_job.id}
+    assert all(job.status == JobStatus.RUNNING for job in claimed)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_claim_skips_future_available_jobs(db_session: AsyncSession, sample_setup):
+    job_repo = BackgroundJobRepository(db_session)
+    future_job = await job_repo.create_broadcast_job(
+        broadcast_id=sample_setup["broadcast"].id,
+        video_id=sample_setup["video"].id,
+        client_bot_id=sample_setup["bot"].id,
+        client_id=sample_setup["client"].id,
+    )
+    future_job.available_at = utc_now() + timedelta(days=1)
+    await db_session.commit()
+
+    claimed = await job_repo.claim_runnable_broadcast_jobs(limit=5)
+
+    assert claimed == []
+    updated_job = await job_repo.get_by_id(future_job.id)
+    assert updated_job.status == JobStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_broadcast_claim_does_not_reclaim_same_job(db_session: AsyncSession, sample_setup):
+    job_repo = BackgroundJobRepository(db_session)
+    job = await job_repo.create_broadcast_job(
+        broadcast_id=sample_setup["broadcast"].id,
+        video_id=sample_setup["video"].id,
+        client_bot_id=sample_setup["bot"].id,
+        client_id=sample_setup["client"].id,
+    )
+    await db_session.commit()
+
+    first_claim = await job_repo.claim_runnable_broadcast_jobs(limit=5)
+    await db_session.commit()
+    second_claim = await job_repo.claim_runnable_broadcast_jobs(limit=5)
+
+    assert [claimed.id for claimed in first_claim] == [job.id]
+    assert second_claim == []
 
 
 @pytest.mark.asyncio
