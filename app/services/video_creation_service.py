@@ -1,6 +1,8 @@
 """Video Creation Service managing intake, metadata extraction, and processing job queuing."""
 
 import asyncio
+import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +40,7 @@ WAITING_FOR_VIDEO = "WAITING_FOR_VIDEO"
 ACCEPTING_VIDEO = "ACCEPTING_VIDEO"
 
 _in_memory_state_store: Dict[str, str] = {}
+_in_memory_state_expires: Dict[str, float] = {}
 _state_lock = asyncio.Lock()
 
 
@@ -60,6 +63,9 @@ class VideoCreationService:
             return await redis.get(key)
         except Exception:
             async with _state_lock:
+                if _in_memory_state_expires.get(key, 0) <= time.monotonic():
+                    _in_memory_state_store.pop(key, None)
+                    _in_memory_state_expires.pop(key, None)
                 return _in_memory_state_store.get(key)
 
     async def set_creation_state(self, client_bot_id: int, telegram_user_id: int, state: str) -> None:
@@ -70,6 +76,7 @@ class VideoCreationService:
         except Exception:
             async with _state_lock:
                 _in_memory_state_store[key] = state
+                _in_memory_state_expires[key] = time.monotonic() + CREATE_VIDEO_STATE_TTL
 
     async def claim_creation_state(self, client_bot_id: int, telegram_user_id: int) -> bool:
         """Atomically transitions state from WAITING_FOR_VIDEO to ACCEPTING_VIDEO."""
@@ -89,8 +96,12 @@ class VideoCreationService:
             return bool(result)
         except Exception:
             async with _state_lock:
+                if _in_memory_state_expires.get(key, 0) <= time.monotonic():
+                    _in_memory_state_store.pop(key, None)
+                    _in_memory_state_expires.pop(key, None)
                 if _in_memory_state_store.get(key) == WAITING_FOR_VIDEO:
                     _in_memory_state_store[key] = ACCEPTING_VIDEO
+                    _in_memory_state_expires[key] = time.monotonic() + CREATE_VIDEO_STATE_TTL
                     return True
                 return False
 
@@ -102,6 +113,36 @@ class VideoCreationService:
         except Exception:
             async with _state_lock:
                 _in_memory_state_store.pop(key, None)
+                _in_memory_state_expires.pop(key, None)
+
+    async def release_creation_state(self, client_bot_id: int, telegram_user_id: int) -> None:
+        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        try:
+            redis = get_redis()
+            await redis.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                "redis.call('set', KEYS[1], ARGV[2], 'EX', ARGV[3]) end",
+                1, key, ACCEPTING_VIDEO, WAITING_FOR_VIDEO, CREATE_VIDEO_STATE_TTL,
+            )
+        except Exception:
+            async with _state_lock:
+                if _in_memory_state_store.get(key) == ACCEPTING_VIDEO:
+                    _in_memory_state_store[key] = WAITING_FOR_VIDEO
+                    _in_memory_state_expires[key] = time.monotonic() + CREATE_VIDEO_STATE_TTL
+
+    async def touch_creation_state(self, client_bot_id: int, telegram_user_id: int) -> None:
+        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        try:
+            redis = get_redis()
+            await redis.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                "redis.call('expire', KEYS[1], ARGV[2]) end",
+                1, key, WAITING_FOR_VIDEO, CREATE_VIDEO_STATE_TTL,
+            )
+        except Exception:
+            async with _state_lock:
+                if _in_memory_state_store.get(key) == WAITING_FOR_VIDEO:
+                    _in_memory_state_expires[key] = time.monotonic() + CREATE_VIDEO_STATE_TTL
 
     # --- Workflow Handlers ---
 
@@ -179,6 +220,7 @@ class VideoCreationService:
 
         # 1. Non-video file (Document) warning: keep WAITING_FOR_VIDEO active
         if document and not video:
+            await self.touch_creation_state(client_bot.id, telegram_user_id)
             await telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.create_video_document_warning_message(),
@@ -187,14 +229,22 @@ class VideoCreationService:
 
         # 2. General non-video input warning: keep WAITING_FOR_VIDEO active
         if not video:
+            await self.touch_creation_state(client_bot.id, telegram_user_id)
             await telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.create_video_non_video_warning_message(),
             )
             return {"ok": True, "action": "non_video_warning_sent"}
 
-        # 3. Atomic State Claim (WAITING_FOR_VIDEO -> ACCEPTING_VIDEO)
-        claimed = await self.claim_creation_state(client_bot.id, telegram_user_id)
+        # Telegram albums arrive as separate, sometimes concurrent webhook updates.
+        claimed = False
+        for _ in range(300):
+            claimed = await self.claim_creation_state(client_bot.id, telegram_user_id)
+            if claimed:
+                break
+            if await self.get_creation_state(client_bot.id, telegram_user_id) != ACCEPTING_VIDEO:
+                break
+            await asyncio.sleep(0.1)
         if not claimed:
             curr_state = await self.get_creation_state(client_bot.id, telegram_user_id)
             if curr_state is None:
@@ -203,7 +253,7 @@ class VideoCreationService:
                     text=messages.create_video_expired_message(),
                 )
                 return {"ok": False, "error": "session_expired"}
-            return {"ok": False, "error": "session_already_claimed"}
+            raise TimeoutError("Video intake is busy; Telegram should retry this update")
 
         # 4. Re-check Admin Authorization
         if admin_id is None:
@@ -259,7 +309,7 @@ class VideoCreationService:
         # 7. Extract Video Metadata (no full video download)
         metadata = TelegramVideoMetadataExtractor.extract(actor_data, chat_id=chat_id)
         if not metadata:
-            await self.set_creation_state(client_bot.id, telegram_user_id, WAITING_FOR_VIDEO)
+            await self.release_creation_state(client_bot.id, telegram_user_id)
             await telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.create_video_non_video_warning_message(),
@@ -275,11 +325,7 @@ class VideoCreationService:
             )
             if existing:
                 logger.info(f"Duplicate video message #{metadata.message_id} ignored for bot #{client_bot.id}")
-                await self.clear_creation_state(client_bot.id, telegram_user_id)
-                await telegram_client.send_message(
-                    chat_id=chat_id,
-                    text=messages.create_video_success_message(),
-                )
+                await self.release_creation_state(client_bot.id, telegram_user_id)
                 return {"ok": True, "action": "duplicate_video_skipped", "video_id": existing.id}
 
         # 9. Database Transaction: Video + Processing + Job + Event
@@ -291,6 +337,10 @@ class VideoCreationService:
                 telegram_file_unique_id=metadata.file_unique_id,
                 telegram_message_id=metadata.message_id,
                 source_chat_id=metadata.chat_id,
+                source_sent_at=(
+                    datetime.fromtimestamp(actor_data["message_date"], tz=timezone.utc)
+                    if isinstance(actor_data.get("message_date"), (int, float)) else None
+                ),
                 source_thumbnail_file_id=metadata.source_thumbnail_file_id,
                 source_thumbnail_file_unique_id=metadata.source_thumbnail_file_unique_id,
                 file_name=metadata.file_name,
@@ -316,15 +366,15 @@ class VideoCreationService:
         except Exception as e:
             logger.error(f"Failed to create video for bot #{client_bot.id}: {e}", exc_info=True)
             await self.session.rollback()
-            await self.set_creation_state(client_bot.id, telegram_user_id, WAITING_FOR_VIDEO)
+            await self.release_creation_state(client_bot.id, telegram_user_id)
             await telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.create_video_error_message(),
             )
             return {"ok": False, "error": "db_transaction_failed"}
 
-        # 10. Close session immediately (one video per session rule)
-        await self.clear_creation_state(client_bot.id, telegram_user_id)
+        # Keep intake open and refresh its idle timeout after each accepted video.
+        await self.release_creation_state(client_bot.id, telegram_user_id)
 
         # 11. Send immediate success confirmation
         await telegram_client.send_message(

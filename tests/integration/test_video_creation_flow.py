@@ -93,7 +93,7 @@ async def test_full_video_creation_admin_flow(db_session: AsyncSession, mock_tg:
         session=db_session,
     )
     assert res_start["action"] == "create_video_prompt_sent"
-    assert "send <b>ONE</b> Telegram video" in mock_tg.send_message.call_args.kwargs["text"]
+    assert "one or more Telegram videos" in mock_tg.send_message.call_args.kwargs["text"]
 
     # 3. Step 2: Admin sends Telegram Video 1
     res_vid1 = await dispatcher.process_update(
@@ -120,22 +120,7 @@ async def test_full_video_creation_admin_flow(db_session: AsyncSession, mock_tg:
     assert res_vid1["action"] == "video_created"
     assert "Video Received" in mock_tg.send_message.call_args.kwargs["text"]
 
-    # 4. Step 3: Admin immediately starts /createvideo for Video 2
-    res_start2 = await dispatcher.process_update(
-        update={
-            "update_id": 803,
-            "message": {
-                "message_id": 3,
-                "chat": {"id": 7001, "type": "private"},
-                "from": {"id": 7001, "username": "cinema_admin"},
-                "text": "/createvideo",
-            },
-        },
-        session=db_session,
-    )
-    assert res_start2["action"] == "create_video_prompt_sent"
-
-    # 5. Step 4: Admin sends Video 2
+    # Admin sends Video 2 without repeating /createvideo.
     res_vid2 = await dispatcher.process_update(
         update={
             "update_id": 804,

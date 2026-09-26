@@ -10,6 +10,7 @@ from app.logging_config import logger
 from app.redis.client import get_redis_client
 from app.services.system_monitoring_service import SystemMonitoringService
 from app.workers.catchup_worker import CatchupWorker
+from app.workers.collection_delivery import CollectionDeliveryWorker
 from app.workers.delivery_retry import process_delivery_retry_job
 from app.workers.lifecycle_worker import LifecycleWorker
 from app.workers.live_broadcast import LiveBroadcastWorker
@@ -63,6 +64,12 @@ class BackgroundWorkerRunner:
                         for j in c_jobs:
                             await catchup_worker.process_job(j.id)
 
+                    if self.queue_name in ("collection_delivery", "all"):
+                        collection_worker = CollectionDeliveryWorker(session)
+                        job = await collection_worker.claim()
+                        if job:
+                            await collection_worker.process(job.id)
+
                     if self.queue_name in ("lifecycle", "all"):
                         lifecycle_worker = LifecycleWorker(session)
                         l_jobs = await lifecycle_worker.get_pending_jobs(limit=5)
@@ -86,7 +93,7 @@ def main():
     parser = argparse.ArgumentParser(description="Control Hub Background Worker Entrypoint")
     parser.add_argument(
         "--queue",
-        choices=["all", "broadcast_live", "video_processing", "catchup", "lifecycle", "maintenance", "telegram_updates"],
+        choices=["all", "broadcast_live", "video_processing", "catchup", "collection_delivery", "lifecycle", "maintenance", "telegram_updates"],
         default="all",
         help="Target queue for this worker instance",
     )

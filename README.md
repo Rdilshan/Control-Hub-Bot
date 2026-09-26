@@ -15,6 +15,8 @@ Control Hub provides a dual-bot platform:
 - **Control Hub Bot**: Main management bot for the Platform Owner and Clients to register and manage connected bots.
 - **Client Bots**: Standalone Telegram bots connected by clients to serve videos, sponsors, unlock links, and broadcast content to viewers.
 
+Client bot admins can use `/createvideo` to upload multiple separate video posts in one session; `/cancel` ends the session, and it expires after 30 minutes of inactivity. `/createcollection` collects one or more videos and a thumbnail photo; `/done` publishes one preview and unlock link for the group. Viewers receive collection videos one by one after unlocking.
+
 ---
 
 ## 2. Technology Stack

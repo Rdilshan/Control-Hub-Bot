@@ -15,6 +15,7 @@ def extract_telegram_actor(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     chat: Optional[Dict[str, Any]] = None
     text: Optional[str] = None
     message_id: Optional[int] = None
+    message_date: Optional[int] = None
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
     update_type: str = "unknown"
@@ -34,6 +35,7 @@ def extract_telegram_actor(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         video = msg.get("video")
         document = msg.get("document")
         message_id = msg.get("message_id")
+        message_date = msg.get("date")
         update_type = "message"
     elif "callback_query" in update:
         cb = update["callback_query"]
@@ -72,6 +74,7 @@ def extract_telegram_actor(update: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "video": video,
         "document": document,
         "message_id": message_id,
+        "message_date": message_date,
         "raw_message": raw_message,
         "callback_query_id": callback_query_id,
         "callback_data": callback_data,

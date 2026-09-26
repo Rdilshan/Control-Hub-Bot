@@ -34,6 +34,7 @@ class Video(Base, IntegerIdMixin, TimestampMixin):
     telegram_file_unique_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     telegram_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     source_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    source_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     source_thumbnail_file_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_thumbnail_file_unique_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     file_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

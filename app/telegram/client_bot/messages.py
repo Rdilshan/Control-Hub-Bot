@@ -11,6 +11,7 @@ def admin_welcome_message(bot_username: Optional[str], display_name: Optional[st
         f"Welcome back{name}! You are the authorized administrator of this bot.\n\n"
         f"<b>Quick Actions:</b>\n"
         f"• 🎬 <b>/createvideo</b> — Upload and publish a new video\n"
+        f"• <b>/createcollection</b> — Publish several videos as one post\n"
         f"• 📊 <b>/stats</b> — View viewer count & video metrics\n"
         f"• 📁 <b>/videos</b> — Manage published video posts\n"
         f"• ⏳ <b>/processing</b> — Inspect active video processing queue\n"
@@ -87,10 +88,10 @@ def default_reply_message(custom_default: Optional[str] = None) -> str:
 def create_video_prompt_message() -> str:
     return (
         "🎬 <b>Create Video</b>\n\n"
-        "Please send <b>ONE</b> Telegram video.\n\n"
+        "Send one or more Telegram videos. Each becomes a separate post.\n\n"
         "After the video is received, background processing will begin immediately.\n"
-        "You can immediately send /createvideo again to add another video.\n\n"
-        "<i>Send /cancel at any time to exit.</i>"
+        "Keep sending videos without repeating /createvideo.\n\n"
+        "<i>Send /cancel to finish. Upload mode expires after 30 minutes of inactivity.</i>"
     )
 
 
@@ -102,7 +103,7 @@ def sponsor_required_message() -> str:
 
 
 def create_video_cancelled_message() -> str:
-    return "❌ <b>Video creation cancelled.</b>"
+    return "<b>Upload session closed.</b> Videos already received will continue processing."
 
 
 def create_video_document_warning_message() -> str:
@@ -113,14 +114,14 @@ def create_video_document_warning_message() -> str:
 
 
 def create_video_non_video_warning_message() -> str:
-    return "⚠️ Please send <b>ONE</b> Telegram video, or send <b>/cancel</b> to exit."
+    return "⚠️ Please send Telegram videos, or send <b>/cancel</b> to exit."
 
 
 def create_video_success_message() -> str:
     return (
         "✅ <b>Video Received</b>\n\n"
         "Your video has been accepted and background processing has started in the background!\n\n"
-        "You can use <b>/createvideo</b> now to add another video."
+        "Send another video, or use <b>/cancel</b> when finished."
     )
 
 
@@ -134,7 +135,7 @@ def create_video_expired_message() -> str:
 def create_video_error_message() -> str:
     return (
         "❌ <b>Could not save this video.</b>\n\n"
-        "A database error occurred. Please try again with <b>/createvideo</b>."
+        "A database error occurred. Please send this video again."
     )
 
 

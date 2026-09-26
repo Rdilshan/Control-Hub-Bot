@@ -53,6 +53,13 @@ JOB_TYPE_POLICIES: Dict[JobType, RetryPolicy] = {
         backoff_multiplier=2.0,
         jitter=True,
     ),
+    JobType.COLLECTION_DELIVERY: RetryPolicy(
+        max_attempts=10,
+        base_delay=15.0,
+        max_delay=900.0,
+        backoff_multiplier=2.0,
+        jitter=True,
+    ),
     JobType.CREATE_UNLOCK_LINK: RetryPolicy(
         max_attempts=5,
         base_delay=10.0,

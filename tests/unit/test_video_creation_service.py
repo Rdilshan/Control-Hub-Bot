@@ -1,6 +1,7 @@
 """Unit tests for VideoCreationService and video intake workflow."""
 
 import pytest
+from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -16,6 +17,7 @@ from app.db.models.video_processing import VideoProcessing
 from app.repositories.job import BackgroundJobRepository
 from app.repositories.video import VideoRepository
 from app.services.video_creation_service import VideoCreationService
+from app.services.video_creation_service import CREATE_VIDEO_STATE_PREFIX, _in_memory_state_expires
 
 
 @pytest.fixture
@@ -225,8 +227,8 @@ async def test_process_video_intake_success_and_job_creation(db_session: AsyncSe
     assert res["action"] == "video_created"
     assert "video_id" in res
 
-    # 1. Session state must be closed immediately
-    assert await service.get_creation_state(bot.id, 103) is None
+    # Session remains open for more videos until /cancel or inactivity expiry.
+    assert await service.get_creation_state(bot.id, 103) == "WAITING_FOR_VIDEO"
 
     # 2. Check Database: Video record exists
     video_repo = VideoRepository(db_session)
@@ -256,6 +258,49 @@ async def test_process_video_intake_success_and_job_creation(db_session: AsyncSe
 
     # 5. Success confirmation sent to admin
     assert "Video Received" in mock_tg.send_message.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_one_session_accepts_100_distinct_videos_and_send_times(db_session: AsyncSession, monkeypatch):
+    monkeypatch.setattr("app.services.video_creation_service.get_redis", lambda: None)
+    client = Client(telegram_user_id=110, username="bulk_owner")
+    db_session.add(client)
+    await db_session.flush()
+    bot = ClientBot(client_id=client.id, telegram_bot_id=91010, username="BulkBot", public_id="b_bulk110", status=ClientBotStatus.ACTIVE)
+    db_session.add(bot)
+    await db_session.flush()
+    db_session.add(SponsorConfig(client_bot_id=bot.id, is_enabled=True, sponsor_url="https://unlockify.ink/bulk"))
+    await db_session.commit()
+    tg = MagicMock()
+    tg.send_message = AsyncMock(return_value={"message_id": 1})
+    service = VideoCreationService(db_session)
+    await service.start_create_video_session(bot, 110, 110, tg)
+    for index in range(100):
+        result = await service.process_video_intake(
+            bot, 110, 110, None,
+            {"chat_id": 110, "message_id": index + 1, "message_date": 1700000000 + index,
+             "video": {"file_id": f"file-{index}", "file_unique_id": f"unique-{index}"}},
+            tg,
+        )
+        assert result["action"] == "video_created"
+    assert await service.get_creation_state(bot.id, 110) == "WAITING_FOR_VIDEO"
+    assert await VideoRepository(db_session).count_by_bot(bot.id) == 100
+    first = await VideoRepository(db_session).get_by_telegram_message(bot.id, 110, 1)
+    last = await VideoRepository(db_session).get_by_telegram_message(bot.id, 110, 100)
+    assert int(first.source_sent_at.replace(tzinfo=timezone.utc).timestamp()) == 1700000000
+    assert int(last.source_sent_at.replace(tzinfo=timezone.utc).timestamp()) == 1700000099
+    await service.cancel_create_video_session(bot.id, 110, 110, tg)
+    assert await service.get_creation_state(bot.id, 110) is None
+
+
+@pytest.mark.asyncio
+async def test_video_session_fallback_expires(db_session: AsyncSession, monkeypatch):
+    monkeypatch.setattr("app.services.video_creation_service.get_redis", lambda: None)
+    service = VideoCreationService(db_session)
+    await service.set_creation_state(999, 999, "WAITING_FOR_VIDEO")
+    key = f"{CREATE_VIDEO_STATE_PREFIX}999:999"
+    _in_memory_state_expires[key] = 0
+    assert await service.get_creation_state(999, 999) is None
 
 
 @pytest.mark.asyncio

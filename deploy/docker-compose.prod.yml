@@ -161,6 +161,29 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  worker-collection:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=collection_delivery"]
+    env_file:
+      - ./env/.env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    networks:
+      - controlhub_internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
   worker-lifecycle:
     build:
       context: ..

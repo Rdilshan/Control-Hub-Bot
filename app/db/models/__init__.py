@@ -9,6 +9,7 @@ from app.db.models.client_bot_settings import ClientBotSettings
 from app.db.models.sponsor_config import SponsorConfig
 from app.db.models.viewer import Viewer
 from app.db.models.video import Video
+from app.db.models.video_collection import VideoCollection, VideoCollectionItem, CollectionItemDelivery
 from app.db.models.video_processing import VideoProcessing
 from app.db.models.unlock_link import UnlockLink
 from app.db.models.broadcast import Broadcast
@@ -31,6 +32,9 @@ __all__ = [
     "SponsorConfig",
     "Viewer",
     "Video",
+    "VideoCollection",
+    "VideoCollectionItem",
+    "CollectionItemDelivery",
     "VideoProcessing",
     "UnlockLink",
     "Broadcast",

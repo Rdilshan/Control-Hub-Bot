@@ -1,10 +1,12 @@
 """Video Processing Service for orchestrating background video ingest."""
 
 from typing import Any, Dict, Optional
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import ClientBotStatus, ProcessingStatus, VideoStatus
 from app.core.security import decrypt_token
 from app.core.utils import utc_now
+from app.db.models.video_collection import VideoCollection
 from app.exceptions import (
     ApplicationError,
     ValidationError,
@@ -105,6 +107,12 @@ class VideoProcessingService:
 
             # STAGE 1: Prepare Preview Photo
             preview_photo_file_id = None
+            collection = (await self.session.execute(select(VideoCollection.id).where(
+                VideoCollection.representative_video_id == video.id,
+                VideoCollection.status == "PUBLISHED",
+            ))).scalar_one_or_none()
+            if collection and video.source_thumbnail_file_id:
+                preview_photo_file_id = video.source_thumbnail_file_id
             if proc.thumbnail_file_id and proc.status in (ProcessingStatus.CREATING_UNLOCK_LINK, ProcessingStatus.READY):
                 preview_photo_file_id = proc.thumbnail_file_id
             elif (

@@ -24,6 +24,7 @@ UPDATE_DEDUP_TTL = 600
 # Admin-only commands
 ADMIN_COMMANDS: Set[str] = {
     "/createvideo",
+    "/createcollection",
     "/stats",
     "/videos",
     "/processing",
@@ -67,6 +68,13 @@ class ClientBotDispatcher:
                 return True
             _in_memory_dedup_store.add(key)
             return False
+
+    async def _release_update(self, update_id: int) -> None:
+        key = f"{UPDATE_DEDUP_PREFIX}{self.bot.id}:{update_id}"
+        try:
+            await get_redis().delete(key)
+        except Exception:
+            _in_memory_dedup_store.discard(key)
 
     async def process_update(
         self,
@@ -153,7 +161,12 @@ class ClientBotDispatcher:
         # 4. Route based on role
         if is_admin:
             admin_router = ClientAdminRouter(telegram_client=tg_client)
-            return await admin_router.handle(bot_ctx, actor, actor_data, session)
+            try:
+                return await admin_router.handle(bot_ctx, actor, actor_data, session)
+            except Exception:
+                if update_id:
+                    await self._release_update(update_id)
+                raise
 
         # 5. For Normal Viewers: Check for Admin Command Attempt
         cmd = text.lower().split()[0] if text.startswith("/") else ""

@@ -1,11 +1,16 @@
 """Viewer Unlock Service for processing /start unlock_<video_public_id> requests."""
 
 from typing import Any, Dict, Optional
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import ClientBotStatus, VideoStatus
+from app.core.enums import ClientBotStatus, JobStatus, JobType, VideoStatus
+from app.core.utils import utc_now
 from app.db.models.client_bot import ClientBot
+from app.db.models.viewer import Viewer
+from app.db.models.video_collection import CollectionItemDelivery, VideoCollection, VideoCollectionItem
 from app.logging_config import logger
 from app.repositories.client_bot import ClientBotRepository
+from app.repositories.job import BackgroundJobRepository
 from app.repositories.video import VideoRepository
 from app.repositories.viewer import ViewerRepository
 from app.services.telegram_unlock_destination_service import TelegramUnlockDestinationService
@@ -119,6 +124,45 @@ class ViewerUnlockService:
             last_name=actor_data.get("last_name"),
             language_code=actor_data.get("language_code"),
         )
+
+        collection = (await self.session.execute(select(VideoCollection).where(
+            VideoCollection.representative_video_id == video.id,
+            VideoCollection.status == "PUBLISHED",
+        ))).scalar_one_or_none()
+        if collection:
+            # Lock the viewer to serialize simultaneous unlock clicks across API workers.
+            await self.session.execute(select(Viewer).where(Viewer.id == viewer.id).with_for_update())
+            jobs = BackgroundJobRepository(self.session)
+            key = f"collection-delivery:{collection.id}:{viewer.id}"
+            existing = await jobs.get_by_deduplication_key(key)
+            complete = False
+            if existing and existing.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                total = (await self.session.execute(select(func.count(VideoCollectionItem.id)).where(
+                    VideoCollectionItem.collection_id == collection.id
+                ))).scalar_one()
+                sent = (await self.session.execute(select(func.count(CollectionItemDelivery.id)).where(
+                    CollectionItemDelivery.collection_id == collection.id,
+                    CollectionItemDelivery.viewer_id == viewer.id,
+                    CollectionItemDelivery.status == "SENT",
+                ))).scalar_one()
+                complete = sent == total
+                if not complete:
+                    existing.status = JobStatus.PENDING
+                    existing.available_at = utc_now()
+                    existing.attempt_count = 0
+                    existing.completed_at = None
+            if not existing:
+                await jobs.create_job(
+                    job_type=JobType.COLLECTION_DELIVERY,
+                    payload={"collection_id": collection.id, "viewer_id": viewer.id},
+                    client_bot_id=client_bot.id, client_id=client_bot.client_id,
+                    video_id=video.id, queue_name="collection_delivery",
+                    deduplication_key=key, max_attempts=10,
+                )
+            await self.session.commit()
+            reply = "This collection was already sent to you." if complete else "Your collection is being sent. Videos will arrive one by one."
+            await telegram_client.send_message(chat_id=chat_id, text=reply)
+            return {"ok": True, "action": "collection_delivery_queued", "collection_id": collection.id}
 
         # 6. Deliver actual video by saved telegram_file_id
         delivery_res = await self.delivery_service.deliver_unlocked_video(

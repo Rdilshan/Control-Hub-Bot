@@ -125,6 +125,7 @@ class JobType(str, Enum):
     RETRY = "RETRY"
     DELIVERY_RETRY = "DELIVERY_RETRY"
     UNLOCK_VIDEO_DELIVERY = "UNLOCK_VIDEO_DELIVERY"
+    COLLECTION_DELIVERY = "COLLECTION_DELIVERY"
     LIFECYCLE_RECOVERY = "LIFECYCLE_RECOVERY"
     BROADCAST_RECOVERY = "BROADCAST_RECOVERY"
     CATCHUP_RECOVERY = "CATCHUP_RECOVERY"
@@ -212,4 +213,3 @@ def enum_val(v: object) -> str:
     if hasattr(v, "value"):
         return str(v.value)
     return str(v)
-

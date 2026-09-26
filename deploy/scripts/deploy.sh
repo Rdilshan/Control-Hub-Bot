@@ -53,7 +53,7 @@ echo "⚡ Step 5: Starting Application and Worker Services..."
 echo "Broadcast worker replicas: ${BROADCAST_WORKER_REPLICAS}"
 docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans \
     --scale worker-broadcast="${BROADCAST_WORKER_REPLICAS}" \
-    app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler
+    app worker-telegram worker-video worker-broadcast worker-catchup worker-collection worker-lifecycle scheduler
 
 # 7. Health and Readiness Checks
 echo "🏥 Step 6: Verifying Deployment Health & Readiness..."

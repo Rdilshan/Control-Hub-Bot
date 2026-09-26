@@ -11,6 +11,7 @@ def admin_dashboard_keyboard() -> Dict[str, Any]:
                 {"text": "🎬 Create Video", "callback_data": "admin:createvideo"},
                 {"text": "📊 Stats", "callback_data": "admin:stats"},
             ],
+            [{"text": "Create Collection", "callback_data": "admin:createcollection"}],
             [
                 {"text": "📁 Videos", "callback_data": "admin:videos"},
                 {"text": "⏳ Processing", "callback_data": "admin:processing"},
