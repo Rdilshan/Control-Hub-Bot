@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/deploy/docker-compose.prod.yml"
 ENV_FILE="${ROOT_DIR}/deploy/env/.env.production"
+BROADCAST_WORKER_REPLICAS="${BROADCAST_WORKER_REPLICAS:-10}"
 
 echo "=========================================================="
 echo "🚀 Starting Control Hub Production Deployment"
@@ -49,7 +50,10 @@ echo "🗄️ Step 4: Applying Database Migrations (alembic upgrade head)..."
 
 # 6. Start/Update Application, Workers, and Scheduler
 echo "⚡ Step 5: Starting Application and Worker Services..."
-docker compose -f "${COMPOSE_FILE}" up -d app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler
+echo "Broadcast worker replicas: ${BROADCAST_WORKER_REPLICAS}"
+docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans \
+    --scale worker-broadcast="${BROADCAST_WORKER_REPLICAS}" \
+    app worker-telegram worker-video worker-broadcast worker-catchup worker-lifecycle scheduler
 
 # 7. Health and Readiness Checks
 echo "🏥 Step 6: Verifying Deployment Health & Readiness..."

@@ -110,7 +110,6 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: controlhub_worker_broadcast
     restart: unless-stopped
     command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=broadcast_live"]
     environment:

@@ -11,4 +11,3 @@ v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(control_hub_webhook.router)
 v1_router.include_router(client_bot_webhook.router)
 api_router.include_router(v1_router)
-

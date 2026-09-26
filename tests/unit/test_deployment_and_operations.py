@@ -3,6 +3,7 @@
 import os
 import hashlib
 import tempfile
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.config import Settings
@@ -102,3 +103,16 @@ def test_backup_checksum_utility():
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def test_deploy_script_scales_broadcast_workers_with_default():
+    deploy_script = Path("deploy/scripts/deploy.sh").read_text(encoding="utf-8")
+    compose_file = Path("deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
+
+    assert 'BROADCAST_WORKER_REPLICAS="${BROADCAST_WORKER_REPLICAS:-10}"' in deploy_script
+    assert '--scale worker-broadcast="${BROADCAST_WORKER_REPLICAS}"' in deploy_script
+    assert "--remove-orphans" in deploy_script
+
+    worker_broadcast_section = compose_file.split("  worker-broadcast:", 1)[1].split("  worker-catchup:", 1)[0]
+    assert "container_name:" not in worker_broadcast_section
+    assert 'command: ["python", "-u", "-m", "app.workers.worker_entrypoint", "--queue=broadcast_live"]' in worker_broadcast_section
