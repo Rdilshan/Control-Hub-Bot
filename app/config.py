@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     BROADCAST_BATCH_SIZE: int = 500
     BROADCAST_MAX_RETRY_ATTEMPTS: int = 3
     CATCHUP_BATCH_SIZE: int = 10
-    CATCHUP_BATCH_DELAY_SECONDS: float = 30.0
+    CATCHUP_BATCH_DELAY_SECONDS: float = 86_400.0  # 1 day between historical catch-up batches
     MAX_ACTIVE_CATCHUP_VIEWERS_PER_BOT: int = 5
 
     # Logging
@@ -120,4 +120,3 @@ class SettingsProxy:
 
 
 settings = SettingsProxy()
-

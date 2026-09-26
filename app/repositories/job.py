@@ -40,6 +40,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
         deduplication_key: Optional[str] = None,
         correlation_id: Optional[str] = None,
         parent_job_id: Optional[int] = None,
+        available_at: Optional[datetime] = None,
     ) -> BackgroundJob:
         now = utc_now()
         job = BackgroundJob(
@@ -56,7 +57,7 @@ class BackgroundJobRepository(BaseRepository[BackgroundJob]):
             payload=payload,
             status=JobStatus.PENDING,
             scheduled_at=now,
-            available_at=now,
+            available_at=available_at or now,
             deduplication_key=deduplication_key,
             correlation_id=correlation_id,
             parent_job_id=parent_job_id,

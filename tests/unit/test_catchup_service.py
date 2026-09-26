@@ -381,3 +381,66 @@ async def test_catchup_worker_job_execution(db_session: AsyncSession, catchup_se
 
     updated_job = await job_repo.get_by_id(job.id)
     assert updated_job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_catchup_worker_schedules_next_batch_for_next_day(db_session: AsyncSession, catchup_setup, monkeypatch):
+    bot = catchup_setup["bot"]
+    viewer = catchup_setup["viewer"]
+
+    db_session.add(
+        ViewerCatchup(
+            client_bot_id=bot.id,
+            viewer_id=viewer.id,
+            status=CatchupStatus.RUNNING,
+            target_max_video_id=catchup_setup["videos"][-1].id,
+            total_eligible=5,
+            delivered_count=2,
+            last_video_id=catchup_setup["videos"][1].id,
+        )
+    )
+    await db_session.flush()
+
+    job_repo = BackgroundJobRepository(db_session)
+    job = await job_repo.create_job(
+        job_type=JobType.CATCHUP,
+        client_bot_id=bot.id,
+        payload={"viewer_id": viewer.id, "client_bot_id": bot.id},
+        queue_name="catchup",
+    )
+    await db_session.commit()
+
+    settings = MagicMock()
+    settings.CATCHUP_BATCH_DELAY_SECONDS = 86_400.0
+    monkeypatch.setattr("app.workers.catchup_worker.get_settings", lambda: settings)
+
+    mock_service = AsyncMock(spec=CatchupService)
+    mock_service.process_viewer_catchup_batch.return_value = {
+        "ok": True,
+        "delivered_count": 2,
+        "remaining_count": 3,
+        "is_completed": False,
+    }
+
+    worker = CatchupWorker(db_session, catchup_service=mock_service)
+    res = await worker.process_job(job.id)
+
+    assert res["ok"] is True
+
+    jobs = await job_repo.get_pending_jobs(job_type=JobType.CATCHUP, limit=10)
+    future_jobs = [j for j in jobs if j.id != job.id]
+    assert len(future_jobs) == 0
+
+    all_jobs_stmt = select(BackgroundJob).where(
+        BackgroundJob.job_type == JobType.CATCHUP,
+        BackgroundJob.id != job.id,
+    )
+    all_jobs_res = await db_session.execute(all_jobs_stmt)
+    next_job = all_jobs_res.scalar_one()
+    assert next_job.available_at > next_job.scheduled_at
+    assert (next_job.available_at - next_job.scheduled_at).total_seconds() >= 86_399
+
+    catchup_repo = ViewerCatchupRepository(db_session)
+    catchup = await catchup_repo.get_by_viewer_id(viewer.id)
+    assert catchup.status == CatchupStatus.PAUSED
+    assert catchup.paused_reason == "BATCH_DELAY"
