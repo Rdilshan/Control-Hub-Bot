@@ -6,6 +6,7 @@ from app.db.session import AsyncSessionLocal
 from app.logging_config import logger
 from app.redis.client import get_redis_client
 from app.services.system_monitoring_service import SystemMonitoringService
+from app.services.video_upload_feedback import VideoUploadFeedback
 from app.workers.lifecycle import process_lifecycle_reconciliation
 from app.workers.maintenance import run_maintenance_recovery_cycle
 
@@ -13,8 +14,9 @@ from app.workers.maintenance import run_maintenance_recovery_cycle
 class SchedulerRunner:
     """Orchestrates periodic background jobs (recovery, reconciliation, cleanup)."""
 
-    def __init__(self, cycle_interval: float = 30.0):
+    def __init__(self, cycle_interval: float = 30.0, feedback_interval: float = 2.0):
         self.cycle_interval = cycle_interval
+        self.feedback_interval = feedback_interval
         self._running = True
 
     def stop(self, *args):
@@ -24,30 +26,44 @@ class SchedulerRunner:
     async def run(self):
         logger.info("Starting periodic scheduler (cycle_interval=%.1fs)", self.cycle_interval)
         monitor = SystemMonitoringService()
+        feedback_task = asyncio.create_task(self._run_feedback())
 
         iteration = 0
-        while self._running:
+        try:
+            while self._running:
+                try:
+                    iteration += 1
+                    await monitor.record_heartbeat("scheduler", {"interval": self.cycle_interval, "iteration": iteration})
+                    await run_maintenance_recovery_cycle()
+                    # Lifecycle reconciliation remains every fifth recovery cycle.
+                    if iteration % 5 == 0:
+                        async with AsyncSessionLocal() as session:
+                            await process_lifecycle_reconciliation(session)
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    logger.exception("Scheduler iteration error: %s", exc)
+                await asyncio.sleep(self.cycle_interval)
+        finally:
+            feedback_task.cancel()
             try:
-                iteration += 1
-                # Heartbeat
-                await monitor.record_heartbeat("scheduler", {"interval": self.cycle_interval, "iteration": iteration})
-
-                # Run recovery cycle every iteration
-                await run_maintenance_recovery_cycle()
-
-                # Run lifecycle reconciliation every 5th iteration (~2.5 minutes)
-                if iteration % 5 == 0:
-                    async with AsyncSessionLocal() as session:
-                        await process_lifecycle_reconciliation(session)
-
+                await feedback_task
             except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.exception("Scheduler iteration error: %s", exc)
-
-            await asyncio.sleep(self.cycle_interval)
+                pass
 
         logger.info("Periodic scheduler gracefully terminated.")
+
+    async def _run_feedback(self):
+        feedback = VideoUploadFeedback()
+        while self._running:
+            try:
+                async with AsyncSessionLocal() as session:
+                    await feedback.flush_due(session)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("Upload feedback scheduler error: %s", exc)
+            await asyncio.sleep(self.feedback_interval)
 
 
 def main():

@@ -257,7 +257,7 @@ async def test_process_video_intake_success_and_job_creation(db_session: AsyncSe
     assert matching_job.payload["thumbnail_file_id"] == "thumb_file_123"
 
     # 5. Success confirmation sent to admin
-    assert "Video Received" in mock_tg.send_message.call_args.kwargs["text"]
+    assert "1 video accepted for processing" in mock_tg.send_message.call_args.kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -273,6 +273,7 @@ async def test_one_session_accepts_100_distinct_videos_and_send_times(db_session
     await db_session.commit()
     tg = MagicMock()
     tg.send_message = AsyncMock(return_value={"message_id": 1})
+    tg.edit_message_text = AsyncMock(return_value={"message_id": 1})
     service = VideoCreationService(db_session)
     await service.start_create_video_session(bot, 110, 110, tg)
     for index in range(100):
@@ -291,6 +292,38 @@ async def test_one_session_accepts_100_distinct_videos_and_send_times(db_session
     assert int(last.source_sent_at.replace(tzinfo=timezone.utc).timestamp()) == 1700000099
     await service.cancel_create_video_session(bot.id, 110, 110, tg)
     assert await service.get_creation_state(bot.id, 110) is None
+    assert tg.send_message.await_count == 2  # One prompt and one status, not 100 confirmations.
+    assert tg.edit_message_text.await_count == 1
+    assert "100 videos accepted" in tg.edit_message_text.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_failed_video_save_is_not_counted_as_accepted(db_session: AsyncSession):
+    client = Client(telegram_user_id=111, username="failed_upload_owner")
+    db_session.add(client)
+    await db_session.flush()
+    bot = ClientBot(client_id=client.id, telegram_bot_id=91011, username="FailedUploadBot", public_id="b_failed111", status=ClientBotStatus.ACTIVE)
+    db_session.add(bot)
+    await db_session.flush()
+    bot_id = bot.id
+    db_session.add(SponsorConfig(client_bot_id=bot.id, is_enabled=True, sponsor_url="https://unlockify.ink/failure"))
+    await db_session.commit()
+    tg = MagicMock()
+    tg.send_message = AsyncMock(return_value={"message_id": 2})
+    tg.edit_message_text = AsyncMock(return_value={"message_id": 2})
+    service = VideoCreationService(db_session)
+    await service.start_create_video_session(bot, 111, 111, tg)
+    service.video_repo.create_video = AsyncMock(side_effect=RuntimeError("Database write failed"))
+
+    result = await service.process_video_intake(
+        bot, 111, 111, None,
+        {"chat_id": 111, "message_id": 1, "video": {"file_id": "file", "file_unique_id": "unique"}},
+        tg,
+    )
+    assert result["error"] == "db_transaction_failed"
+    assert tg.send_message.await_count == 2  # Prompt and error only.
+    await service.cancel_create_video_session(bot_id, 111, 111, tg)
+    assert "0 videos accepted" in tg.send_message.call_args.kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -425,6 +458,7 @@ async def test_process_video_intake_duplicate_webhook(db_session: AsyncSession):
     assert res2["ok"] is True
     assert res2["action"] == "duplicate_video_skipped"
     assert res2["video_id"] == res1["video_id"]
+    assert mock_tg.send_message.await_count == 1
 
     # Verify total video count is still 1
     video_repo = VideoRepository(db_session)

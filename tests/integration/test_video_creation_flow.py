@@ -118,7 +118,7 @@ async def test_full_video_creation_admin_flow(db_session: AsyncSession, mock_tg:
         session=db_session,
     )
     assert res_vid1["action"] == "video_created"
-    assert "Video Received" in mock_tg.send_message.call_args.kwargs["text"]
+    assert "1 video accepted for processing" in mock_tg.send_message.call_args.kwargs["text"]
 
     # Admin sends Video 2 without repeating /createvideo.
     res_vid2 = await dispatcher.process_update(

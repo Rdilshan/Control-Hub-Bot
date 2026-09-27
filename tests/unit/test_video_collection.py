@@ -132,6 +132,8 @@ async def test_owner_can_switch_upload_modes_without_losing_saved_video(db_sessi
         monkeypatch.setattr(path, lambda: fake)
     monkeypatch.setattr("app.services.video_creation_service.get_redis", lambda: None)
     tg = AsyncMock()
+    tg.send_message.return_value = {"message_id": 7}
+    tg.edit_message_text.return_value = {"message_id": 7}
     dispatcher = ClientBotDispatcher(bot, telegram_client=tg)
 
     async def send(update_id, message_id, **content):
@@ -144,6 +146,7 @@ async def test_owner_can_switch_upload_modes_without_losing_saved_video(db_sessi
     assert (await send(50001, 1, text="/createvideo"))["action"] == "create_video_prompt_sent"
     assert (await send(50002, 2, video={"file_id": "single", "file_unique_id": "single-unique"}))["action"] == "video_created"
     assert (await send(50003, 3, text="/createcollection"))["action"] == "collection_started"
+    assert "1 video accepted" in tg.edit_message_text.call_args.kwargs["text"]
     assert (await send(50004, 4, video={"file_id": "group-1", "file_unique_id": "group-unique-1"}))["action"] == "collection_input_received"
     assert (await send(50005, 5, photo=[{"file_id": "group-photo"}], caption="Collection title"))["action"] == "collection_input_received"
     assert (await send(50006, 6, text="/done"))["action"] == "collection_published"

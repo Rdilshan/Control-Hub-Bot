@@ -119,8 +119,7 @@ def create_video_non_video_warning_message() -> str:
 
 def create_video_success_message() -> str:
     return (
-        "✅ <b>Video Received</b>\n\n"
-        "Your video has been accepted and background processing has started in the background!\n\n"
+        "✅ <b>Video accepted for processing.</b>\n\n"
         "Send another video, or use <b>/cancel</b> when finished."
     )
 

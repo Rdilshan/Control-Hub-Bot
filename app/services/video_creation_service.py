@@ -29,6 +29,7 @@ from app.repositories.job import BackgroundJobRepository
 from app.repositories.sponsor import SponsorRepository
 from app.repositories.video import VideoRepository
 from app.services.telegram_video_metadata_extractor import TelegramVideoMetadataExtractor
+from app.services.video_upload_feedback import VideoUploadFeedback
 from app.telegram.client import TelegramClient
 from app.telegram.client_bot import messages
 
@@ -53,6 +54,7 @@ class VideoCreationService:
         self.sponsor_repo = SponsorRepository(session)
         self.job_repo = BackgroundJobRepository(session)
         self.admin_repo = ClientBotAdminRepository(session)
+        self.feedback = VideoUploadFeedback()
 
     # --- Session State Management ---
 
@@ -172,6 +174,15 @@ class VideoCreationService:
             return {"ok": False, "error": "sponsor_required"}
 
         # 3. Set WAITING_FOR_VIDEO state
+        previous_state = await self.get_creation_state(client_bot.id, telegram_user_id)
+        for _ in range(300):
+            if previous_state != ACCEPTING_VIDEO:
+                break
+            await asyncio.sleep(0.1)
+            previous_state = await self.get_creation_state(client_bot.id, telegram_user_id)
+        if previous_state:
+            await self.feedback.finish(client_bot.id, telegram_user_id, chat_id, telegram_client)
+        await self.feedback.start(client_bot.id, telegram_user_id, chat_id)
         await self.set_creation_state(client_bot.id, telegram_user_id, WAITING_FOR_VIDEO)
 
         # 4. Send prompt to admin
@@ -189,12 +200,25 @@ class VideoCreationService:
         telegram_client: TelegramClient,
     ) -> Dict[str, Any]:
         """Cancels an active /createvideo session."""
+        # Let an in-flight video finish saving before reporting the final count.
+        for _ in range(300):
+            state = await self.get_creation_state(client_bot_id, telegram_user_id)
+            if state != ACCEPTING_VIDEO:
+                break
+            await asyncio.sleep(0.1)
         await self.clear_creation_state(client_bot_id, telegram_user_id)
-        await telegram_client.send_message(
-            chat_id=chat_id,
-            text=messages.create_video_cancelled_message(),
-        )
+        await self.feedback.finish(client_bot_id, telegram_user_id, chat_id, telegram_client)
         return {"ok": True, "action": "create_video_cancelled"}
+
+    async def close_if_active(
+        self,
+        client_bot_id: int,
+        telegram_user_id: int,
+        chat_id: int,
+        telegram_client: TelegramClient,
+    ) -> None:
+        if await self.get_creation_state(client_bot_id, telegram_user_id):
+            await self.cancel_create_video_session(client_bot_id, telegram_user_id, chat_id, telegram_client)
 
     async def process_video_intake(
         self,
@@ -329,6 +353,7 @@ class VideoCreationService:
                 return {"ok": True, "action": "duplicate_video_skipped", "video_id": existing.id}
 
         # 9. Database Transaction: Video + Processing + Job + Event
+        client_bot_id = client_bot.id
         try:
             new_video = await self.video_repo.create_video(
                 client_bot_id=client_bot.id,
@@ -366,21 +391,20 @@ class VideoCreationService:
         except Exception as e:
             logger.error(f"Failed to create video for bot #{client_bot.id}: {e}", exc_info=True)
             await self.session.rollback()
-            await self.release_creation_state(client_bot.id, telegram_user_id)
+            await self.release_creation_state(client_bot_id, telegram_user_id)
             await telegram_client.send_message(
                 chat_id=chat_id,
                 text=messages.create_video_error_message(),
             )
             return {"ok": False, "error": "db_transaction_failed"}
 
-        # Keep intake open and refresh its idle timeout after each accepted video.
-        await self.release_creation_state(client_bot.id, telegram_user_id)
-
-        # 11. Send immediate success confirmation
-        await telegram_client.send_message(
-            chat_id=chat_id,
-            text=messages.create_video_success_message(),
-        )
+        # Feedback failure must not undo the committed video or its processing job.
+        try:
+            await self.feedback.accepted(client_bot.id, telegram_user_id, chat_id, telegram_client)
+        except Exception:
+            logger.exception("Upload feedback failed after saving video #%s", new_video.id)
+        finally:
+            await self.release_creation_state(client_bot.id, telegram_user_id)
 
         logger.info(f"Video #{new_video.id} (public_id: {new_video.public_id}) created successfully for bot #{client_bot.id}")
         return {

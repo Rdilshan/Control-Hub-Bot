@@ -159,7 +159,7 @@ class ClientAdminRouter:
             await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
-            await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             try:
                 await collection_service.start(bot_model, actor.telegram_user_id)
                 reply = "Send videos, then one thumbnail photo. Its caption becomes the title. Wait for the expected video count, then send /done. Use /cancel to discard."
@@ -315,7 +315,7 @@ class ClientAdminRouter:
         if cmd in ("/cancel", "cancel"):
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
-            await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
                 text="❌ No active operation to cancel.",
@@ -340,7 +340,7 @@ class ClientAdminRouter:
 
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
-            await video_service.clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
                 text=messages.admin_welcome_message(
@@ -418,7 +418,7 @@ class ClientAdminRouter:
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             from app.services.video_creation_service import VideoCreationService
             from app.services.video_collection_service import VideoCollectionService
-            await VideoCreationService(session).clear_creation_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCreationService(session).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             try:
                 await VideoCollectionService(session).start(bot_model, actor.telegram_user_id)
                 reply, action = "Send videos, then one thumbnail photo. Its caption becomes the title. Wait for the expected video count, then send /done. Use /cancel to discard.", "collection_started"
