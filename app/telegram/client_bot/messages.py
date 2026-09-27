@@ -264,19 +264,24 @@ def admin_processing_summary_message(proc: dict) -> str:
 
 def create_link_video_prompt_message() -> str:
     return (
-        "<b>Create Link-Only Videos</b>\n\n"
-        "Send one or more Telegram videos. Each video gets its own unlock link.\n\n"
-        "These videos will not be broadcast to users and will not appear in catch-up.\n"
-        "Keep sending videos without repeating /createlinkvideo.\n\n"
+        "🔗 <b>Create Link-Only Videos</b>\n\n"
+        "Send <b>one or more Telegram videos</b>. Each video gets its own unlock link.\n\n"
+        "🚫 <i>No broadcast</i>\n"
+        "🚫 <i>No catch-up</i>\n"
+        "✅ <i>Owner shares links manually</i>\n\n"
+        "Keep sending videos without repeating <code>/createlinkvideo</code>.\n\n"
         "<i>Send /cancel to finish. Upload mode expires after 30 minutes of inactivity.</i>"
     )
 
 
 def create_link_collection_prompt_message() -> str:
     return (
-        "<b>Create Link-Only Collection</b>\n\n"
-        "Send one or more Telegram videos, then send /done.\n\n"
-        "The bot will create one unlock link for the whole collection. No thumbnail is needed, and no broadcast will be sent.\n\n"
+        "🧩 <b>Create Link-Only Collection</b>\n\n"
+        "Send <b>one or more Telegram videos</b>, then send <code>/done</code>.\n\n"
+        "The bot will create <b>one unlock link</b> for the whole collection.\n\n"
+        "🚫 <i>No thumbnail needed</i>\n"
+        "🚫 <i>No broadcast</i>\n"
+        "✅ <i>Videos deliver in order after unlock</i>\n\n"
         "<i>Send /cancel to discard this draft. Draft mode expires after 30 minutes of inactivity.</i>"
     )
 
@@ -285,25 +290,35 @@ def admin_welcome_message(bot_username, display_name, client_first_name=None) ->
     handle = f"@{bot_username}" if bot_username else (display_name or "Your Bot")
     name = f" <b>{client_first_name}</b>" if client_first_name else ""
     return (
-        f"<b>Admin Dashboard - {handle}</b>\n\n"
+        f"👑 <b>Admin Dashboard</b>\n"
+        f"<code>{handle}</code>\n\n"
         f"Welcome back{name}! You are the authorized administrator of this bot.\n\n"
-        f"<b>Publish to Users:</b>\n"
-        f"- <b>/createvideo</b> - Upload video posts and broadcast them\n"
-        f"- <b>/createcollection</b> - Publish several videos as one broadcast post\n"
-        f"- <b>/broadcasts</b> - Send custom messages to users\n\n"
-        f"<b>Create Link Only:</b>\n"
-        f"- <b>/createlinkvideo</b> - Create unlock links without broadcast\n"
-        f"- <b>/createlinkcollection</b> - Create one unlock link for several videos\n\n"
-        f"<b>Manage:</b>\n"
-        f"- <b>/stats</b> - View viewer count and video metrics\n"
-        f"- <b>/videos</b> - Manage published video posts\n"
-        f"- <b>/processing</b> - Inspect active video processing queue\n"
-        f"- <b>/users</b> - View subscriber growth and activity\n\n"
-        f"<b>Settings:</b>\n"
-        f"- <b>/sponsor</b> - Configure Unlockify sponsor links\n"
-        f"- <b>/startmessage</b> - Edit custom /start text\n"
-        f"- <b>/defaultmessage</b> - Edit fallback reply message\n\n"
-        f"<i>Tap an option below or use the commands menu.</i>"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📣 <b>Publish to Users</b>\n"
+        f"🎬 <b>/createvideo</b>\n"
+        f"   <i>Upload video posts and broadcast them</i>\n"
+        f"🗂 <b>/createcollection</b>\n"
+        f"   <i>Publish several videos as one broadcast post</i>\n"
+        f"📢 <b>/broadcasts</b>\n"
+        f"   <i>Send custom messages to users</i>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔗 <b>Create Link Only</b>\n"
+        f"🎞 <b>/createlinkvideo</b>\n"
+        f"   <i>Create unlock links without broadcast</i>\n"
+        f"🧩 <b>/createlinkcollection</b>\n"
+        f"   <i>Create one unlock link for several videos</i>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>Manage</b>\n"
+        f"📈 <b>/stats</b> - <i>Viewer and video metrics</i>\n"
+        f"📁 <b>/videos</b> - <i>Published video posts</i>\n"
+        f"⏳ <b>/processing</b> - <i>Active processing queue</i>\n"
+        f"👥 <b>/users</b> - <i>Subscriber growth and activity</i>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚙️ <b>Settings</b>\n"
+        f"🔓 <b>/sponsor</b> - <i>Unlockify sponsor links</i>\n"
+        f"💬 <b>/startmessage</b> - <i>Custom /start text</i>\n"
+        f"🔁 <b>/defaultmessage</b> - <i>Fallback reply message</i>\n\n"
+        f"<i>Tap a button below or use the commands menu.</i>"
     )
 
 
