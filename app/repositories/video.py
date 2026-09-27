@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import BotEventType, ProcessingStatus, VideoStatus
+from app.core.enums import BotEventType, ProcessingStatus, VideoDeliveryMode, VideoStatus, enum_val
 from app.core.utils import utc_now
 from app.db.models.bot_event import BotEvent
 from app.db.models.client_bot import ClientBot
@@ -71,6 +71,7 @@ class VideoRepository(BaseRepository[Video]):
         height: Optional[int] = None,
         caption: Optional[str] = None,
         public_id: Optional[str] = None,
+        delivery_mode: VideoDeliveryMode | str = VideoDeliveryMode.PUBLISHED,
     ) -> Video:
         """Creates a video record and its initial VideoProcessing row inside one transaction."""
         from app.core.utils import generate_public_id
@@ -94,6 +95,7 @@ class VideoRepository(BaseRepository[Video]):
             height=height,
             caption=caption,
             status=VideoStatus.RECEIVED,
+            delivery_mode=enum_val(delivery_mode) or VideoDeliveryMode.PUBLISHED.value,
         )
         self.session.add(video)
         await self.session.flush()
@@ -149,12 +151,15 @@ class VideoRepository(BaseRepository[Video]):
         self,
         client_bot_id: int,
         status: Optional[VideoStatus] = None,
+        delivery_mode: Optional[VideoDeliveryMode | str] = VideoDeliveryMode.PUBLISHED,
         limit: int = 50,
         offset: int = 0,
     ) -> List[Video]:
         stmt = select(Video).where(Video.client_bot_id == client_bot_id)
         if status:
             stmt = stmt.where(Video.status == status)
+        if delivery_mode is not None:
+            stmt = stmt.where(Video.delivery_mode == enum_val(delivery_mode))
         stmt = stmt.order_by(Video.created_at.desc()).limit(limit).offset(offset)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -165,7 +170,13 @@ class VideoRepository(BaseRepository[Video]):
         limit: int = 50,
         offset: int = 0,
     ) -> List[Video]:
-        return await self.list_by_bot(client_bot_id=client_bot_id, status=VideoStatus.READY, limit=limit, offset=offset)
+        return await self.list_by_bot(
+            client_bot_id=client_bot_id,
+            status=VideoStatus.READY,
+            delivery_mode=VideoDeliveryMode.PUBLISHED,
+            limit=limit,
+            offset=offset,
+        )
 
     async def list_processing_by_bot(
         self,
@@ -177,6 +188,7 @@ class VideoRepository(BaseRepository[Video]):
             .where(
                 Video.client_bot_id == client_bot_id,
                 Video.status.in_([VideoStatus.RECEIVED, VideoStatus.PROCESSING]),
+                Video.delivery_mode == VideoDeliveryMode.PUBLISHED.value,
             )
             .order_by(Video.created_at.desc())
             .limit(limit)
@@ -194,6 +206,7 @@ class VideoRepository(BaseRepository[Video]):
             .where(
                 Video.client_bot_id == client_bot_id,
                 Video.status == VideoStatus.READY,
+                Video.delivery_mode == VideoDeliveryMode.PUBLISHED.value,
             )
             .order_by(Video.published_at.asc())
             .limit(limit)
@@ -201,10 +214,17 @@ class VideoRepository(BaseRepository[Video]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_by_bot(self, client_bot_id: int, status: Optional[VideoStatus] = None) -> int:
+    async def count_by_bot(
+        self,
+        client_bot_id: int,
+        status: Optional[VideoStatus] = None,
+        delivery_mode: Optional[VideoDeliveryMode | str] = None,
+    ) -> int:
         stmt = select(func.count(Video.id)).where(Video.client_bot_id == client_bot_id)
         if status:
             stmt = stmt.where(Video.status == status)
+        if delivery_mode is not None:
+            stmt = stmt.where(Video.delivery_mode == enum_val(delivery_mode))
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 

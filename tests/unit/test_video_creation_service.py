@@ -5,7 +5,7 @@ from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.enums import ClientBotStatus, JobStatus, JobType, ProcessingStatus, VideoStatus
+from app.core.enums import ClientBotStatus, JobStatus, JobType, ProcessingStatus, VideoDeliveryMode, VideoStatus
 from app.core.security import encrypt_token
 from app.db.base import Base
 from app.db.models.client import Client
@@ -17,7 +17,7 @@ from app.db.models.video_processing import VideoProcessing
 from app.repositories.job import BackgroundJobRepository
 from app.repositories.video import VideoRepository
 from app.services.video_creation_service import VideoCreationService
-from app.services.video_creation_service import CREATE_VIDEO_STATE_PREFIX, _in_memory_state_expires
+from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, CREATE_VIDEO_STATE_PREFIX, _in_memory_state_expires
 
 
 @pytest.fixture
@@ -258,6 +258,62 @@ async def test_process_video_intake_success_and_job_creation(db_session: AsyncSe
 
     # 5. Success confirmation sent to admin
     assert "1 video accepted for processing" in mock_tg.send_message.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_link_only_video_intake_creates_processing_job_without_publish_mode(db_session: AsyncSession):
+    client = Client(telegram_user_id=109, username="link_owner")
+    db_session.add(client)
+    await db_session.flush()
+
+    bot = ClientBot(
+        client_id=client.id,
+        telegram_bot_id=90909,
+        username="LinkBot",
+        public_id="b_link109",
+        status=ClientBotStatus.ACTIVE,
+    )
+    db_session.add(bot)
+    await db_session.flush()
+    db_session.add(ClientBotAdmin(client_bot_id=bot.id, telegram_user_id=109, is_active=True))
+    db_session.add(SponsorConfig(client_bot_id=bot.id, is_enabled=True, sponsor_url="https://unlockify.ink/link"))
+    await db_session.commit()
+
+    mock_tg = MagicMock()
+    mock_tg.send_message = AsyncMock(return_value={"message_id": 109})
+
+    service = VideoCreationService(
+        db_session,
+        delivery_mode=VideoDeliveryMode.LINK_ONLY,
+        state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+    )
+    await service.set_creation_state(bot.id, 109, "WAITING_FOR_VIDEO")
+
+    result = await service.process_video_intake(
+        client_bot=bot,
+        telegram_user_id=109,
+        chat_id=109,
+        admin_id=None,
+        actor_data={
+            "update_type": "message",
+            "telegram_user_id": 109,
+            "chat_id": 109,
+            "message_id": 90901,
+            "message_date": 1700000000,
+            "video": {"file_id": "link-video-file", "file_unique_id": "link-video-unique"},
+            "caption": "Manual share",
+        },
+        telegram_client=mock_tg,
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "link_video_created"
+    video = await db_session.get(Video, result["video_id"])
+    assert video.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+    assert video.caption == "Manual share"
+    jobs, total = await BackgroundJobRepository(db_session).list_paginated(job_type=JobType.VIDEO_PROCESS)
+    assert total == 1
+    assert jobs[0].video_id == video.id
 
 
 @pytest.mark.asyncio

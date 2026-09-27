@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.enums import VideoDeliveryMode
 from app.db.base import Base, IntegerIdMixin, TimestampMixin
 
 
@@ -18,11 +19,18 @@ class VideoCollection(Base, IntegerIdMixin, TimestampMixin):
         BigInteger, ForeignKey("videos.id", ondelete="SET NULL"), unique=True, nullable=True
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
+    delivery_mode: Mapped[str] = mapped_column(String(30), nullable=False, default=VideoDeliveryMode.PUBLISHED.value)
     thumbnail_file_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     caption: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    __table_args__ = (Index("ix_collection_owner_status", "client_bot_id", "owner_telegram_user_id", "status"),)
+    __table_args__ = (
+        CheckConstraint(
+            "delivery_mode in ('PUBLISHED', 'LINK_ONLY')",
+            name="ck_video_collections_delivery_mode",
+        ),
+        Index("ix_collection_owner_status", "client_bot_id", "owner_telegram_user_id", "status"),
+    )
 
 
 class VideoCollectionItem(Base, IntegerIdMixin, TimestampMixin):

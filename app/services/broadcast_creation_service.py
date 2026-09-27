@@ -1,7 +1,7 @@
 """Broadcast creation service for queuing LIVE broadcasts after video processing."""
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import ViewerStatus
+from app.core.enums import VideoDeliveryMode, ViewerStatus, enum_val
 from app.db.models.broadcast import Broadcast
 from app.db.models.client_bot import ClientBot
 from app.db.models.video import Video
@@ -34,6 +34,9 @@ class BroadcastCreationService:
         Returns:
             The created or existing Broadcast instance.
         """
+        if enum_val(getattr(video, "delivery_mode", None)) == VideoDeliveryMode.LINK_ONLY.value:
+            raise ValueError("Link-only videos cannot be broadcast")
+
         # 1. Check if a broadcast already exists for this video (Idempotency)
         existing_broadcast = await self.broadcast_repo.get_by_video_id(video.id)
         if existing_broadcast:

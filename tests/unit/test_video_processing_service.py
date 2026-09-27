@@ -12,6 +12,7 @@ from app.core.enums import (
     JobType,
     ProcessingStatus,
     UnlockLinkStatus,
+    VideoDeliveryMode,
     VideoStatus,
 )
 from app.core.security import encrypt_token
@@ -346,6 +347,67 @@ async def test_video_processing_service_full_flow(db_session: AsyncSession):
         jobs, total = await job_repo.list_paginated(job_type=JobType.BROADCAST)
         assert total == 1
         assert jobs[0].broadcast_id == broadcast.id
+
+
+@pytest.mark.asyncio
+async def test_link_only_video_processing_skips_preview_broadcast_and_notifies_owner(db_session: AsyncSession):
+    client = Client(telegram_user_id=209, username="owner209")
+    db_session.add(client)
+    await db_session.flush()
+
+    bot = ClientBot(
+        client_id=client.id,
+        telegram_bot_id=88809,
+        username="LinkOnlyBot",
+        public_id="bot_209",
+        token_encrypted=encrypt_token("123456:BOT_TOKEN_209"),
+        status=ClientBotStatus.ACTIVE,
+    )
+    db_session.add(bot)
+    await db_session.flush()
+    db_session.add(SponsorConfig(client_bot_id=bot.id, is_enabled=True, sponsor_url="https://sponsor.ink/link"))
+    await db_session.flush()
+
+    video_repo = VideoRepository(db_session)
+    vid = await video_repo.create_video(
+        client_bot_id=bot.id,
+        telegram_file_id="link_only_file",
+        telegram_file_unique_id="link_only_unique",
+        source_chat_id=client.telegram_user_id,
+        caption="Manual link video",
+        delivery_mode=VideoDeliveryMode.LINK_ONLY,
+    )
+    await db_session.commit()
+
+    mock_unlockify = MagicMock(spec=UnlockifyClient)
+    mock_unlockify.create_link = AsyncMock(
+        return_value=UnlockifyLinkData(
+            id="link_only_1",
+            title="Manual link video",
+            ads_count=1,
+            unlock_url="https://developer.unlockify.ink/u/link_only_1",
+        )
+    )
+
+    with patch("app.telegram.client.TelegramClient.send_photo", new_callable=AsyncMock) as mock_send_photo, \
+         patch("app.telegram.client.TelegramClient.send_message", new_callable=AsyncMock) as mock_send_message:
+        mock_send_message.return_value = {"message_id": 900}
+        res = await VideoProcessingService(db_session, unlockify_client=mock_unlockify).process_video(vid.id)
+
+    assert res["ok"] is True
+    assert res["delivery_mode"] == VideoDeliveryMode.LINK_ONLY.value
+    assert res["unlock_url"] == "https://developer.unlockify.ink/u/link_only_1"
+    mock_send_photo.assert_not_called()
+    mock_send_message.assert_awaited_once()
+    assert "not broadcast" in mock_send_message.call_args.kwargs["text"]
+
+    await db_session.refresh(vid)
+    assert vid.status == VideoStatus.READY
+    proc = await VideoProcessingRepository(db_session).get_by_video_id(vid.id)
+    assert proc.status == ProcessingStatus.READY
+    assert proc.thumbnail_file_id is None
+    assert proc.unlock_url == "https://developer.unlockify.ink/u/link_only_1"
+    assert await BroadcastRepository(db_session).get_by_video_id(vid.id) is None
 
 
 @pytest.mark.asyncio

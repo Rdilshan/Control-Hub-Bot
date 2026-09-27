@@ -60,6 +60,11 @@ class VideoStatus(str, Enum):
     DISABLED = "DISABLED"
 
 
+class VideoDeliveryMode(str, Enum):
+    PUBLISHED = "PUBLISHED"
+    LINK_ONLY = "LINK_ONLY"
+
+
 class ProcessingStatus(str, Enum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"

@@ -3,6 +3,7 @@
 from typing import Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.enums import VideoDeliveryMode
 from app.db.models.client_bot import ClientBot
 from app.db.models.client_bot_admin import ClientBotAdmin
 from app.logging_config import get_logger
@@ -42,10 +43,16 @@ class ClientAdminRouter:
         text = actor_data.get("text") or ""
         cmd = text.lower().split()[0] if text.startswith("/") else ""
 
-        from app.services.video_creation_service import VideoCreationService
+        from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, VideoCreationService
         from app.db.models.client_bot import ClientBot
 
         video_service = VideoCreationService(session)
+        link_video_service = VideoCreationService(
+            session,
+            delivery_mode=VideoDeliveryMode.LINK_ONLY,
+            state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+            prompt_text=messages.create_link_video_prompt_message(),
+        )
         from app.services.video_collection_service import VideoCollectionService
         collection_service = VideoCollectionService(session)
         bot_model = await session.get(ClientBot, bot_ctx.client_bot_id)
@@ -155,11 +162,41 @@ class ClientAdminRouter:
                     session=session,
                 )
 
+        if cmd == "/createlinkcollection":
+            await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await link_video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await collection_service.cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            try:
+                await collection_service.start(bot_model, actor.telegram_user_id, delivery_mode=VideoDeliveryMode.LINK_ONLY)
+                reply = messages.create_link_collection_prompt_message()
+                action = "link_collection_started"
+            except ValueError as exc:
+                reply, action = str(exc), "link_collection_denied"
+            await self.telegram_client.send_message(actor.chat_id, reply)
+            return {"ok": action == "link_collection_started", "action": action}
+
+        if cmd == "/createlinkvideo":
+            await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await collection_service.cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            return await link_video_service.start_create_video_session(
+                client_bot=bot_model,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+            )
+
         if cmd == "/createcollection":
             await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await link_video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             try:
                 await collection_service.start(bot_model, actor.telegram_user_id)
                 reply = "Send videos, then one thumbnail photo. Its caption becomes the title. Wait for the expected video count, then send /done. Use /cancel to discard."
@@ -174,6 +211,7 @@ class ClientAdminRouter:
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await collection_service.cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await link_video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             from app.telegram.client_bot.admin.createvideo import handle_createvideo_command
             return await handle_createvideo_command(
                 client_bot=bot_model, telegram_user_id=actor.telegram_user_id,
@@ -185,11 +223,26 @@ class ClientAdminRouter:
             if cmd == "/done":
                 video_id, reply = await collection_service.finish(bot_model, actor.telegram_user_id)
                 await self.telegram_client.send_message(actor.chat_id, reply)
-                return {"ok": video_id is not None, "action": "collection_published" if video_id else "collection_incomplete", "video_id": video_id}
+                is_link_collection = draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+                return {
+                    "ok": video_id is not None,
+                    "action": (
+                        "link_collection_created"
+                        if video_id and is_link_collection
+                        else "collection_published"
+                        if video_id
+                        else "collection_incomplete"
+                    ),
+                    "video_id": video_id,
+                }
             if cmd in ("/cancel", "cancel"):
+                is_link_collection = draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
                 await collection_service.cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
-                await self.telegram_client.send_message(actor.chat_id, "Collection discarded.")
-                return {"ok": True, "action": "collection_cancelled"}
+                await self.telegram_client.send_message(
+                    actor.chat_id,
+                    "Link-only collection discarded." if is_link_collection else "Collection discarded.",
+                )
+                return {"ok": True, "action": "link_collection_cancelled" if is_link_collection else "collection_cancelled"}
             if not cmd.startswith("/"):
                 reply = await collection_service.receive(bot_ctx.client_bot_id, actor.telegram_user_id, actor_data)
                 await self.telegram_client.send_message(actor.chat_id, reply)
@@ -197,6 +250,29 @@ class ClientAdminRouter:
         if cmd == "/done":
             await self.telegram_client.send_message(actor.chat_id, "No active collection. Send /createcollection to start one.")
             return {"ok": True, "action": "collection_not_active"}
+
+        link_creation_state = await link_video_service.get_creation_state(
+            client_bot_id=bot_ctx.client_bot_id,
+            telegram_user_id=actor.telegram_user_id,
+        )
+
+        if link_creation_state in ("WAITING_FOR_VIDEO", "ACCEPTING_VIDEO"):
+            if cmd in ("/cancel", "cancel"):
+                return await link_video_service.cancel_create_video_session(
+                    client_bot_id=bot_ctx.client_bot_id,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    telegram_client=self.telegram_client,
+                )
+            if not cmd.startswith("/"):
+                return await link_video_service.process_video_intake(
+                    client_bot=bot_model,
+                    telegram_user_id=actor.telegram_user_id,
+                    chat_id=actor.chat_id,
+                    admin_id=actor.admin_record_id,
+                    actor_data=actor_data,
+                    telegram_client=self.telegram_client,
+                )
 
         creation_state = await video_service.get_creation_state(
             client_bot_id=bot_ctx.client_bot_id,
@@ -316,6 +392,7 @@ class ClientAdminRouter:
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await link_video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
                 text="❌ No active operation to cancel.",
@@ -341,6 +418,7 @@ class ClientAdminRouter:
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await link_video_service.close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             await self.telegram_client.send_message(
                 chat_id=actor.chat_id,
                 text=messages.admin_welcome_message(
@@ -391,15 +469,69 @@ class ClientAdminRouter:
                 status=bot_ctx.status,
             )
 
+        if cb_data == "admin:createlinkvideo":
+            from app.telegram.campaign_flow import clear_draft
+            from app.telegram.client_bot.admin.custom_messages import clear_messages_state
+            from app.telegram.client_bot.admin.sponsor import clear_sponsor_state
+            from app.services.video_collection_service import VideoCollectionService
+            from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, VideoCreationService
+            await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCollectionService(session).cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCreationService(session).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            return await VideoCreationService(
+                session,
+                delivery_mode=VideoDeliveryMode.LINK_ONLY,
+                state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+                prompt_text=messages.create_link_video_prompt_message(),
+            ).start_create_video_session(
+                client_bot=bot_model,
+                telegram_user_id=actor.telegram_user_id,
+                chat_id=actor.chat_id,
+                telegram_client=self.telegram_client,
+            )
+
+        if cb_data == "admin:createlinkcollection":
+            from app.telegram.campaign_flow import clear_draft
+            from app.telegram.client_bot.admin.custom_messages import clear_messages_state
+            from app.telegram.client_bot.admin.sponsor import clear_sponsor_state
+            from app.services.video_collection_service import VideoCollectionService
+            from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, VideoCreationService
+            await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
+            await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCollectionService(session).cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCreationService(session).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await VideoCreationService(
+                session,
+                delivery_mode=VideoDeliveryMode.LINK_ONLY,
+                state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+                prompt_text=messages.create_link_video_prompt_message(),
+            ).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            try:
+                await VideoCollectionService(session).start(bot_model, actor.telegram_user_id, delivery_mode=VideoDeliveryMode.LINK_ONLY)
+                reply, action = messages.create_link_collection_prompt_message(), "link_collection_started"
+            except ValueError as exc:
+                reply, action = str(exc), "link_collection_denied"
+            await self.telegram_client.send_message(actor.chat_id, reply)
+            return {"ok": action == "link_collection_started", "action": action}
+
         if cb_data == "admin:createvideo":
             from app.telegram.campaign_flow import clear_draft
             from app.telegram.client_bot.admin.custom_messages import clear_messages_state
             from app.telegram.client_bot.admin.sponsor import clear_sponsor_state
+            from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, VideoCreationService
             await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             from app.services.video_collection_service import VideoCollectionService
             await VideoCollectionService(session).cancel(bot_ctx.client_bot_id, actor.telegram_user_id)
+            await VideoCreationService(
+                session,
+                delivery_mode=VideoDeliveryMode.LINK_ONLY,
+                state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+            ).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             from app.telegram.client_bot.admin.createvideo import handle_createvideo_command
             return await handle_createvideo_command(
                 client_bot=bot_model,
@@ -416,9 +548,14 @@ class ClientAdminRouter:
             await clear_draft(str(bot_ctx.client_bot_id), actor.telegram_user_id)
             await clear_messages_state(bot_ctx.client_bot_id, actor.telegram_user_id)
             await clear_sponsor_state(bot_ctx.client_bot_id, actor.telegram_user_id)
-            from app.services.video_creation_service import VideoCreationService
+            from app.services.video_creation_service import CREATE_LINK_VIDEO_STATE_PREFIX, VideoCreationService
             from app.services.video_collection_service import VideoCollectionService
             await VideoCreationService(session).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
+            await VideoCreationService(
+                session,
+                delivery_mode=VideoDeliveryMode.LINK_ONLY,
+                state_prefix=CREATE_LINK_VIDEO_STATE_PREFIX,
+            ).close_if_active(bot_ctx.client_bot_id, actor.telegram_user_id, actor.chat_id, self.telegram_client)
             try:
                 await VideoCollectionService(session).start(bot_model, actor.telegram_user_id)
                 reply, action = "Send videos, then one thumbnail photo. Its caption becomes the title. Wait for the expected video count, then send /done. Use /cancel to discard.", "collection_started"

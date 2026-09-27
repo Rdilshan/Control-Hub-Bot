@@ -12,6 +12,7 @@ from app.core.enums import (
     JobStatus,
     JobType,
     ProcessingStatus,
+    VideoDeliveryMode,
     VideoStatus,
     enum_val,
 )
@@ -36,6 +37,7 @@ from app.telegram.client_bot import messages
 logger = get_logger(__name__)
 
 CREATE_VIDEO_STATE_PREFIX = "controlhub:clientbot:state:"
+CREATE_LINK_VIDEO_STATE_PREFIX = "controlhub:clientbot:link-state:"
 CREATE_VIDEO_STATE_TTL = 1800  # 30 minutes
 WAITING_FOR_VIDEO = "WAITING_FOR_VIDEO"
 ACCEPTING_VIDEO = "ACCEPTING_VIDEO"
@@ -48,18 +50,35 @@ _state_lock = asyncio.Lock()
 class VideoCreationService:
     """Manages the video creation session, media verification, database persistence, and job initialization."""
 
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        delivery_mode: VideoDeliveryMode | str = VideoDeliveryMode.PUBLISHED,
+        state_prefix: str = CREATE_VIDEO_STATE_PREFIX,
+        prompt_text: Optional[str] = None,
+    ):
         self.session = session
         self.video_repo = VideoRepository(session)
         self.sponsor_repo = SponsorRepository(session)
         self.job_repo = BackgroundJobRepository(session)
         self.admin_repo = ClientBotAdminRepository(session)
         self.feedback = VideoUploadFeedback()
+        self.delivery_mode = enum_val(delivery_mode) or VideoDeliveryMode.PUBLISHED.value
+        self.state_prefix = state_prefix
+        self.prompt_text = prompt_text
+
+    @property
+    def is_link_only(self) -> bool:
+        return self.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+
+    def _state_key(self, client_bot_id: int, telegram_user_id: int) -> str:
+        return f"{self.state_prefix}{client_bot_id}:{telegram_user_id}"
 
     # --- Session State Management ---
 
     async def get_creation_state(self, client_bot_id: int, telegram_user_id: int) -> Optional[str]:
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             return await redis.get(key)
@@ -71,7 +90,7 @@ class VideoCreationService:
                 return _in_memory_state_store.get(key)
 
     async def set_creation_state(self, client_bot_id: int, telegram_user_id: int, state: str) -> None:
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             await redis.set(key, state, ex=CREATE_VIDEO_STATE_TTL)
@@ -82,7 +101,7 @@ class VideoCreationService:
 
     async def claim_creation_state(self, client_bot_id: int, telegram_user_id: int) -> bool:
         """Atomically transitions state from WAITING_FOR_VIDEO to ACCEPTING_VIDEO."""
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             # Redis Lua script for atomic state claim
@@ -108,7 +127,7 @@ class VideoCreationService:
                 return False
 
     async def clear_creation_state(self, client_bot_id: int, telegram_user_id: int) -> None:
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             await redis.delete(key)
@@ -118,7 +137,7 @@ class VideoCreationService:
                 _in_memory_state_expires.pop(key, None)
 
     async def release_creation_state(self, client_bot_id: int, telegram_user_id: int) -> None:
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             await redis.eval(
@@ -133,7 +152,7 @@ class VideoCreationService:
                     _in_memory_state_expires[key] = time.monotonic() + CREATE_VIDEO_STATE_TTL
 
     async def touch_creation_state(self, client_bot_id: int, telegram_user_id: int) -> None:
-        key = f"{CREATE_VIDEO_STATE_PREFIX}{client_bot_id}:{telegram_user_id}"
+        key = self._state_key(client_bot_id, telegram_user_id)
         try:
             redis = get_redis()
             await redis.eval(
@@ -188,9 +207,9 @@ class VideoCreationService:
         # 4. Send prompt to admin
         await telegram_client.send_message(
             chat_id=chat_id,
-            text=messages.create_video_prompt_message(),
+            text=self.prompt_text or messages.create_video_prompt_message(),
         )
-        return {"ok": True, "action": "create_video_prompt_sent"}
+        return {"ok": True, "action": "link_video_prompt_sent" if self.is_link_only else "create_video_prompt_sent"}
 
     async def cancel_create_video_session(
         self,
@@ -208,7 +227,7 @@ class VideoCreationService:
             await asyncio.sleep(0.1)
         await self.clear_creation_state(client_bot_id, telegram_user_id)
         await self.feedback.finish(client_bot_id, telegram_user_id, chat_id, telegram_client)
-        return {"ok": True, "action": "create_video_cancelled"}
+        return {"ok": True, "action": "link_video_cancelled" if self.is_link_only else "create_video_cancelled"}
 
     async def close_if_active(
         self,
@@ -375,6 +394,7 @@ class VideoCreationService:
                 width=metadata.width,
                 height=metadata.height,
                 caption=metadata.caption,
+                delivery_mode=self.delivery_mode,
             )
 
             # Ensure active background job is created
@@ -409,7 +429,7 @@ class VideoCreationService:
         logger.info(f"Video #{new_video.id} (public_id: {new_video.public_id}) created successfully for bot #{client_bot.id}")
         return {
             "ok": True,
-            "action": "video_created",
+            "action": "link_video_created" if self.is_link_only else "video_created",
             "video_id": new_video.id,
             "public_id": new_video.public_id,
         }

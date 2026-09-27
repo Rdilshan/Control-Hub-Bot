@@ -25,6 +25,8 @@ UPDATE_DEDUP_TTL = 600
 ADMIN_COMMANDS: Set[str] = {
     "/createvideo",
     "/createcollection",
+    "/createlinkvideo",
+    "/createlinkcollection",
     "/stats",
     "/videos",
     "/processing",

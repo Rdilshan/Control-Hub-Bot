@@ -5,7 +5,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.enums import BotAdminRole, ClientBotStatus, ProcessingStatus, VideoStatus
+from app.core.enums import BotAdminRole, ClientBotStatus, ProcessingStatus, VideoDeliveryMode, VideoStatus
 from app.core.security import encrypt_token
 from app.db.base import Base
 from app.db.models.client import Client
@@ -185,6 +185,66 @@ async def test_full_video_creation_admin_flow(db_session: AsyncSession, mock_tg:
     )
     assert res_proc["action"] == "admin_processing_list"
     assert "Processing Queue" in mock_tg.send_message.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_link_only_video_creation_admin_flow(db_session: AsyncSession, mock_tg: TelegramClient):
+    client = Client(telegram_user_id=7011, username="link_admin")
+    db_session.add(client)
+    await db_session.flush()
+
+    bot = ClientBot(
+        client_id=client.id,
+        telegram_bot_id=717171,
+        username="LinkClubBot",
+        display_name="Link Club",
+        public_id="b_linkclub",
+        token_encrypted=encrypt_token("717171:ABCdefGHIjklMNOpqrsTUVwxyz_1234567"),
+        status=ClientBotStatus.ACTIVE,
+    )
+    db_session.add(bot)
+    await db_session.flush()
+    db_session.add(ClientBotAdmin(client_bot_id=bot.id, telegram_user_id=7011, role=BotAdminRole.OWNER, is_active=True))
+    db_session.add(SponsorConfig(client_bot_id=bot.id, is_enabled=True, sponsor_url="https://unlockify.ink/link"))
+    await db_session.commit()
+
+    dispatcher = ClientBotDispatcher(bot=bot, telegram_client=mock_tg)
+
+    res_start = await dispatcher.process_update(
+        update={
+            "update_id": 811,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 7011, "type": "private"},
+                "from": {"id": 7011, "username": "link_admin"},
+                "text": "/createlinkvideo",
+            },
+        },
+        session=db_session,
+    )
+    assert res_start["action"] == "link_video_prompt_sent"
+    assert "Link-Only Videos" in mock_tg.send_message.call_args.kwargs["text"]
+
+    res_video = await dispatcher.process_update(
+        update={
+            "update_id": 812,
+            "message": {
+                "message_id": 2,
+                "chat": {"id": 7011, "type": "private"},
+                "from": {"id": 7011, "username": "link_admin"},
+                "caption": "Share manually",
+                "video": {"file_id": "file_link_111", "file_unique_id": "uniq_link_111"},
+            },
+        },
+        session=db_session,
+    )
+    assert res_video["action"] == "link_video_created"
+
+    video = await db_session.get(Video, res_video["video_id"])
+    assert video.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+
+    videos = await VideoRepository(db_session).list_by_bot(bot.id)
+    assert videos == []
 
 
 @pytest.mark.asyncio

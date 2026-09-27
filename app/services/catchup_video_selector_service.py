@@ -3,7 +3,7 @@
 from typing import List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import VideoStatus
+from app.core.enums import VideoDeliveryMode, VideoStatus
 from app.db.models.video import Video
 from app.logging_config import logger
 from app.repositories.catchup import CatchupDeliveryRepository
@@ -30,6 +30,7 @@ class CatchupVideoSelectorService:
             .where(
                 Video.client_bot_id == client_bot_id,
                 Video.status == VideoStatus.READY,
+                Video.delivery_mode == VideoDeliveryMode.PUBLISHED.value,
             )
         )
         result = await self.session.execute(stmt)
@@ -47,6 +48,7 @@ class CatchupVideoSelectorService:
         stmt = select(func.count(Video.id)).where(
             Video.client_bot_id == client_bot_id,
             Video.status == VideoStatus.READY,
+            Video.delivery_mode == VideoDeliveryMode.PUBLISHED.value,
         )
         if target_max_video_id is not None:
             stmt = stmt.where(Video.id <= target_max_video_id)
@@ -83,6 +85,7 @@ class CatchupVideoSelectorService:
             .where(
                 Video.client_bot_id == client_bot_id,
                 Video.status == VideoStatus.READY,
+                Video.delivery_mode == VideoDeliveryMode.PUBLISHED.value,
                 Video.id > cursor_video_id,
             )
         )

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import func, select
 
-from app.core.enums import ClientBotStatus, JobStatus, JobType
+from app.core.enums import ClientBotStatus, JobStatus, JobType, VideoDeliveryMode
 from app.core.enums import ViewerStatus, VideoStatus
 from app.core.security import encrypt_token
 from app.core.utils import utc_now
@@ -80,6 +80,34 @@ async def test_collection_draft_finishes_as_one_post(db_session):
     assert len(jobs) == 1
     video_id_again, _ = await service.finish(bot, 4455)
     assert video_id_again is None
+
+
+@pytest.mark.asyncio
+async def test_link_only_collection_finishes_without_thumbnail(db_session):
+    bot = await setup_bot(db_session)
+    service = VideoCollectionService(db_session)
+    draft = await service.start(bot, 4455, delivery_mode=VideoDeliveryMode.LINK_ONLY)
+
+    video_id, reply = await service.finish(bot, 4455)
+    assert video_id is None
+    assert "at least one" in reply
+
+    await service.receive(bot.id, 4455, video_data(1))
+    photo_reply = await service.receive(bot.id, 4455, {"raw_message": {"photo": [{"file_id": "ignored"}]}})
+    assert "No thumbnail is needed" in photo_reply
+
+    video_id, reply = await service.finish(bot, 4455)
+    assert video_id is not None
+    assert "unlock link" in reply
+    video = await db_session.get(Video, video_id)
+    assert video.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+    assert video.source_thumbnail_file_id is None
+    assert draft.representative_video_id == video_id
+    assert (await db_session.execute(select(func.count(VideoCollectionItem.id)))).scalar_one() == 1
+    video.status = VideoStatus.READY
+    await db_session.commit()
+    selector = CatchupVideoSelectorService(db_session)
+    assert await selector.get_max_ready_video_id(bot.id) is None
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import ClientBotStatus, enum_val
+from app.core.enums import ClientBotStatus, VideoDeliveryMode, enum_val
 from app.core.utils import utc_now
 from app.db.models.client_bot import ClientBot
 from app.db.models.video_collection import VideoCollection, VideoCollectionItem
@@ -35,7 +35,12 @@ class VideoCollectionService:
             return None
         return draft
 
-    async def start(self, bot: ClientBot, user_id: int) -> VideoCollection:
+    async def start(
+        self,
+        bot: ClientBot,
+        user_id: int,
+        delivery_mode: VideoDeliveryMode | str = VideoDeliveryMode.PUBLISHED,
+    ) -> VideoCollection:
         if enum_val(bot.status) != ClientBotStatus.ACTIVE.value:
             raise ValueError("This bot is not active.")
         sponsor = await SponsorRepository(self.session).get_by_bot_id(bot.id)
@@ -47,7 +52,9 @@ class VideoCollectionService:
             old.status = "CANCELLED"
         draft = VideoCollection(
             client_bot_id=bot.id, owner_telegram_user_id=user_id,
-            status="DRAFT", expires_at=utc_now() + timedelta(minutes=30),
+            status="DRAFT",
+            delivery_mode=enum_val(delivery_mode) or VideoDeliveryMode.PUBLISHED.value,
+            expires_at=utc_now() + timedelta(minutes=30),
         )
         self.session.add(draft)
         await self.session.commit()
@@ -90,9 +97,13 @@ class VideoCollectionService:
             count = (await self.session.execute(select(func.count(VideoCollectionItem.id)).where(
                 VideoCollectionItem.collection_id == draft.id
             ))).scalar_one()
+            if draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value:
+                return f"{count} video(s) received. Send more videos, then /done to create one unlock link."
             return f"{count} video(s) received. Send more videos, then one thumbnail photo and /done."
         photos = (actor_data.get("raw_message") or {}).get("photo")
         if photos:
+            if draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value:
+                return "No thumbnail is needed for link-only collections. Send more videos or /done."
             file_id = photos[-1].get("file_id") if isinstance(photos[-1], dict) else None
             if not file_id:
                 return "This photo could not be identified. Please send it again."
@@ -104,6 +115,8 @@ class VideoCollectionService:
                 VideoCollectionItem.collection_id == draft.id
             ))).scalar_one()
             return f"Thumbnail received. {count} video(s) saved. If the count is correct, send /done."
+        if draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value:
+            return "Send Telegram videos or /done. Send /cancel to discard this link-only collection."
         return "Send Telegram videos, one thumbnail photo, or /done. Send /cancel to discard this collection."
 
     async def finish(self, bot: ClientBot, user_id: int) -> tuple[Optional[int], str]:
@@ -115,7 +128,8 @@ class VideoCollectionService:
         ).order_by(VideoCollectionItem.position, VideoCollectionItem.id))).scalars())
         if not items:
             return None, "Send at least one video before /done."
-        if not draft.thumbnail_file_id:
+        is_link_only = draft.delivery_mode == VideoDeliveryMode.LINK_ONLY.value
+        if not is_link_only and not draft.thumbnail_file_id:
             return None, "Send one thumbnail photo before /done."
         if enum_val(bot.status) != ClientBotStatus.ACTIVE.value:
             return None, "This bot is not active. The collection remains a draft."
@@ -129,8 +143,9 @@ class VideoCollectionService:
             source_chat_id=first.source_chat_id, telegram_message_id=first.telegram_message_id,
             source_sent_at=first.source_sent_at,
             source_thumbnail_file_id=draft.thumbnail_file_id,
-            caption=draft.caption or "Video Collection",
+            caption=draft.caption or ("Link Collection" if is_link_only else "Video Collection"),
             duration_seconds=first.duration_seconds, width=first.width, height=first.height,
+            delivery_mode=VideoDeliveryMode.LINK_ONLY if is_link_only else VideoDeliveryMode.PUBLISHED,
         )
         draft.representative_video_id = video.id
         draft.status = "PUBLISHED"
@@ -139,4 +154,6 @@ class VideoCollectionService:
             thumbnail_file_id=draft.thumbnail_file_id,
         )
         await self.session.commit()
+        if is_link_only:
+            return video.id, f"Link-only collection received: {len(items)} video(s). One unlock link is being prepared."
         return video.id, f"Collection received: {len(items)} video(s). One preview and unlock link are being prepared."

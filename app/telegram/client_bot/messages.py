@@ -262,6 +262,51 @@ def admin_processing_summary_message(proc: dict) -> str:
     )
 
 
+def create_link_video_prompt_message() -> str:
+    return (
+        "<b>Create Link-Only Videos</b>\n\n"
+        "Send one or more Telegram videos. Each video gets its own unlock link.\n\n"
+        "These videos will not be broadcast to users and will not appear in catch-up.\n"
+        "Keep sending videos without repeating /createlinkvideo.\n\n"
+        "<i>Send /cancel to finish. Upload mode expires after 30 minutes of inactivity.</i>"
+    )
+
+
+def create_link_collection_prompt_message() -> str:
+    return (
+        "<b>Create Link-Only Collection</b>\n\n"
+        "Send one or more Telegram videos, then send /done.\n\n"
+        "The bot will create one unlock link for the whole collection. No thumbnail is needed, and no broadcast will be sent.\n\n"
+        "<i>Send /cancel to discard this draft. Draft mode expires after 30 minutes of inactivity.</i>"
+    )
+
+
+def admin_welcome_message(bot_username, display_name, client_first_name=None) -> str:
+    handle = f"@{bot_username}" if bot_username else (display_name or "Your Bot")
+    name = f" <b>{client_first_name}</b>" if client_first_name else ""
+    return (
+        f"<b>Admin Dashboard - {handle}</b>\n\n"
+        f"Welcome back{name}! You are the authorized administrator of this bot.\n\n"
+        f"<b>Publish to Users:</b>\n"
+        f"- <b>/createvideo</b> - Upload video posts and broadcast them\n"
+        f"- <b>/createcollection</b> - Publish several videos as one broadcast post\n"
+        f"- <b>/broadcasts</b> - Send custom messages to users\n\n"
+        f"<b>Create Link Only:</b>\n"
+        f"- <b>/createlinkvideo</b> - Create unlock links without broadcast\n"
+        f"- <b>/createlinkcollection</b> - Create one unlock link for several videos\n\n"
+        f"<b>Manage:</b>\n"
+        f"- <b>/stats</b> - View viewer count and video metrics\n"
+        f"- <b>/videos</b> - Manage published video posts\n"
+        f"- <b>/processing</b> - Inspect active video processing queue\n"
+        f"- <b>/users</b> - View subscriber growth and activity\n\n"
+        f"<b>Settings:</b>\n"
+        f"- <b>/sponsor</b> - Configure Unlockify sponsor links\n"
+        f"- <b>/startmessage</b> - Edit custom /start text\n"
+        f"- <b>/defaultmessage</b> - Edit fallback reply message\n\n"
+        f"<i>Tap an option below or use the commands menu.</i>"
+    )
+
+
 def admin_broadcasts_summary_message(bcasts: dict) -> str:
     live_run = f"{bcasts.get('live_running', 0):,}"
     live_wait = f"{bcasts.get('live_waiting', 0):,}"

@@ -40,6 +40,8 @@ NORMAL_USER_COMMANDS = [
 OWNER_ADMIN_COMMANDS = [
     {"command": "createvideo", "description": "Create new video post"},
     {"command": "createcollection", "description": "Create a video collection"},
+    {"command": "createlinkvideo", "description": "Create video unlock links only"},
+    {"command": "createlinkcollection", "description": "Create collection unlock link only"},
     {"command": "stats", "description": "View bot analytics"},
     {"command": "videos", "description": "Manage videos"},
     {"command": "processing", "description": "Processing queue"},

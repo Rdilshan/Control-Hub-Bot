@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.core.enums import VideoStatus
+from app.core.enums import VideoDeliveryMode, VideoStatus
 from app.core.utils import generate_public_id
 from app.db.base import Base, IntegerIdMixin, TimestampMixin
 
@@ -50,6 +50,12 @@ class Video(Base, IntegerIdMixin, TimestampMixin):
         index=True,
         nullable=False,
     )
+    delivery_mode: Mapped[str] = mapped_column(
+        String(30),
+        default=VideoDeliveryMode.PUBLISHED.value,
+        nullable=False,
+        index=True,
+    )
     published_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         index=True,
@@ -57,8 +63,13 @@ class Video(Base, IntegerIdMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "delivery_mode in ('PUBLISHED', 'LINK_ONLY')",
+            name="ck_videos_delivery_mode",
+        ),
         Index("ix_videos_bot_created", "client_bot_id", "created_at"),
         Index("ix_videos_bot_status", "client_bot_id", "status"),
+        Index("ix_videos_bot_mode_status", "client_bot_id", "delivery_mode", "status"),
         UniqueConstraint("client_bot_id", "source_chat_id", "telegram_message_id", name="uq_videos_bot_source_message"),
     )
 

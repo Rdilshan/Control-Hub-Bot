@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.enums import ClientBotStatus, ProcessingStatus, VideoStatus
+from app.core.enums import ClientBotStatus, ProcessingStatus, VideoDeliveryMode, VideoStatus, enum_val
 from app.core.security import decrypt_token
 from app.core.utils import utc_now
 from app.db.models.video_collection import VideoCollection
@@ -68,6 +68,8 @@ class VideoProcessingService:
             logger.error("VideoProcessing record not found for video_id=%d", video.id)
             return {"ok": False, "error": "processing_record_not_found"}
 
+        is_link_only = enum_val(getattr(video, "delivery_mode", None)) == VideoDeliveryMode.LINK_ONLY.value
+
         client_bot = await self.bot_repo.get_by_id(video.client_bot_id)
         if not client_bot:
             logger.error("ClientBot id=%d not found for video_id=%d", video.client_bot_id, video.id)
@@ -82,6 +84,15 @@ class VideoProcessingService:
 
         # If already READY and has LIVE broadcast, idempotently complete
         if video.status == VideoStatus.READY and proc.status == ProcessingStatus.READY:
+            if is_link_only:
+                logger.info("Link-only video id=%d already READY. No broadcast required.", video.id)
+                return {
+                    "ok": True,
+                    "video_id": video.id,
+                    "status": "READY",
+                    "unlock_url": proc.unlock_url,
+                    "delivery_mode": VideoDeliveryMode.LINK_ONLY.value,
+                }
             logger.info("Video id=%d already READY. Ensuring LIVE broadcast exists.", video.id)
             broadcast = await self.broadcast_service.create_live_broadcast(video=video, client_bot=client_bot)
             return {"ok": True, "video_id": video.id, "status": "READY", "broadcast_id": broadcast.id}
@@ -107,35 +118,36 @@ class VideoProcessingService:
 
             # STAGE 1: Prepare Preview Photo
             preview_photo_file_id = None
-            collection = (await self.session.execute(select(VideoCollection.id).where(
-                VideoCollection.representative_video_id == video.id,
-                VideoCollection.status == "PUBLISHED",
-            ))).scalar_one_or_none()
-            if collection and video.source_thumbnail_file_id:
-                preview_photo_file_id = video.source_thumbnail_file_id
-            if proc.thumbnail_file_id and proc.status in (ProcessingStatus.CREATING_UNLOCK_LINK, ProcessingStatus.READY):
-                preview_photo_file_id = proc.thumbnail_file_id
-            elif (
-                proc.thumbnail_file_id
-                and proc.status == ProcessingStatus.PROCESSING_THUMBNAIL
-                and proc.thumbnail_file_id != video.source_thumbnail_file_id
-            ):
-                preview_photo_file_id = proc.thumbnail_file_id
+            if not is_link_only:
+                collection = (await self.session.execute(select(VideoCollection.id).where(
+                    VideoCollection.representative_video_id == video.id,
+                    VideoCollection.status == "PUBLISHED",
+                ))).scalar_one_or_none()
+                if collection and video.source_thumbnail_file_id:
+                    preview_photo_file_id = video.source_thumbnail_file_id
+                if proc.thumbnail_file_id and proc.status in (ProcessingStatus.CREATING_UNLOCK_LINK, ProcessingStatus.READY):
+                    preview_photo_file_id = proc.thumbnail_file_id
+                elif (
+                    proc.thumbnail_file_id
+                    and proc.status == ProcessingStatus.PROCESSING_THUMBNAIL
+                    and proc.thumbnail_file_id != video.source_thumbnail_file_id
+                ):
+                    preview_photo_file_id = proc.thumbnail_file_id
 
-            if not preview_photo_file_id:
-                await self.proc_repo.update_progress(video_id=video.id, status=ProcessingStatus.PROCESSING_THUMBNAIL)
-                await self.video_repo.update_status(video.id, VideoStatus.PROCESSING)
-                preview_service = PreviewPhotoService(telegram_client)
-                upload_chat_id = video.source_chat_id or client_bot.telegram_bot_id
-                preview_photo_file_id = await preview_service.prepare_preview_photo(
-                    chat_id=upload_chat_id,
-                    source_thumbnail_file_id=video.source_thumbnail_file_id,
-                )
-                await self.proc_repo.update_progress(
-                    video_id=video.id,
-                    status=ProcessingStatus.PROCESSING_THUMBNAIL,
-                    thumbnail_file_id=preview_photo_file_id,
-                )
+                if not preview_photo_file_id:
+                    await self.proc_repo.update_progress(video_id=video.id, status=ProcessingStatus.PROCESSING_THUMBNAIL)
+                    await self.video_repo.update_status(video.id, VideoStatus.PROCESSING)
+                    preview_service = PreviewPhotoService(telegram_client)
+                    upload_chat_id = video.source_chat_id or client_bot.telegram_bot_id
+                    preview_photo_file_id = await preview_service.prepare_preview_photo(
+                        chat_id=upload_chat_id,
+                        source_thumbnail_file_id=video.source_thumbnail_file_id,
+                    )
+                    await self.proc_repo.update_progress(
+                        video_id=video.id,
+                        status=ProcessingStatus.PROCESSING_THUMBNAIL,
+                        thumbnail_file_id=preview_photo_file_id,
+                    )
 
             # STAGE 2: Create Destination URL and Unlockify Link
             await self.proc_repo.update_progress(video_id=video.id, status=ProcessingStatus.CREATING_UNLOCK_LINK)
@@ -203,9 +215,11 @@ class VideoProcessingService:
                     unlock_url=unlock_url,
                 )
 
-            # STAGE 3: Invariant Verification, Mark READY, and Queue Broadcast
-            if not (video.telegram_file_id and preview_photo_file_id and unlock_url):
+            # STAGE 3: Invariant Verification, Mark READY, and Queue Broadcast if this is a published post.
+            if not (video.telegram_file_id and unlock_url):
                 raise ValidationError("Invariants for READY video not met: missing required file_id or unlock_url")
+            if not is_link_only and not preview_photo_file_id:
+                raise ValidationError("Invariants for READY video not met: missing preview file_id")
 
             await self.proc_repo.update_progress(
                 video_id=video.id,
@@ -214,6 +228,32 @@ class VideoProcessingService:
                 unlock_url=unlock_url,
             )
             await self.video_repo.mark_ready(video_id=video.id, client_bot_id=client_bot.id)
+
+            if is_link_only:
+                if video.source_chat_id:
+                    try:
+                        await telegram_client.send_message(
+                            chat_id=video.source_chat_id,
+                            text=(
+                                "<b>Unlock link ready</b>\n\n"
+                                f"{unlock_url}\n\n"
+                                "This link-only video was not broadcast to users."
+                            ),
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            "Failed to notify owner for link-only video id=%d: %s",
+                            video.id,
+                            notify_err,
+                        )
+                logger.info("Link-only video id=%d processing complete and marked READY", video.id)
+                return {
+                    "ok": True,
+                    "video_id": video.id,
+                    "status": "READY",
+                    "unlock_url": unlock_url,
+                    "delivery_mode": VideoDeliveryMode.LINK_ONLY.value,
+                }
 
             broadcast = await self.broadcast_service.create_live_broadcast(video=video, client_bot=client_bot)
 
