@@ -141,7 +141,17 @@ class CatchupService:
             logger.info("Viewer id=%d is BLOCKED. Halting catch-up.", viewer_id)
             await self.catchup_repo.mark_blocked(viewer_id)
             await self.session.commit()
-            return {"ok": True, "status": CatchupStatus.BLOCKED, "message": "Viewer blocked"}
+            return {
+                "ok": True,
+                "viewer_id": viewer_id,
+                "status": CatchupStatus.BLOCKED,
+                "delivered_count": 0,
+                "failed_count": 0,
+                "remaining_count": 0,
+                "is_completed": False,
+                "is_blocked": True,
+                "message": "Viewer blocked",
+            }
 
         # 3. LIVE Priority check
         if await self.scheduler_service.has_live_broadcast_in_progress(client_bot.id):
@@ -176,12 +186,15 @@ class CatchupService:
                 "delivered_count": 0,
                 "failed_count": 0,
                 "completed": True,
+                "is_completed": True,
+                "is_blocked": False,
             }
 
         # 6. Deliver batch
         delivered_count = 0
         failed_count = 0
         last_processed_video_id = cursor
+        is_blocked = False
 
         for video in videos:
             # Check LIVE priority mid-batch
@@ -209,6 +222,7 @@ class CatchupService:
             elif status == CatchupStatus.BLOCKED:
                 await self.catchup_repo.mark_blocked(viewer_id)
                 last_processed_video_id = video.id
+                is_blocked = True
                 break
             elif status == CatchupStatus.FAILED:
                 failed_count += 1
@@ -224,6 +238,20 @@ class CatchupService:
             failed_delta=failed_count,
         )
 
+        if is_blocked:
+            await self.catchup_repo.mark_blocked(viewer_id)
+            await self.session.commit()
+            return {
+                "ok": True,
+                "viewer_id": viewer_id,
+                "status": CatchupStatus.BLOCKED,
+                "delivered_count": delivered_count,
+                "failed_count": failed_count,
+                "remaining_count": 0,
+                "is_completed": False,
+                "is_blocked": True,
+            }
+
         # 8. Check remaining count
         remaining = await self.video_selector.count_eligible_unseen_videos(
             client_bot_id=client_bot.id,
@@ -232,7 +260,7 @@ class CatchupService:
         )
 
         is_completed = False
-        if remaining == 0 and catchup.status != CatchupStatus.BLOCKED:
+        if remaining == 0:
             await self.catchup_repo.mark_completed(viewer_id)
             is_completed = True
             logger.info("Viewer id=%d catch-up cycle COMPLETED", viewer_id)
@@ -247,4 +275,5 @@ class CatchupService:
             "failed_count": failed_count,
             "remaining_count": remaining,
             "is_completed": is_completed,
+            "is_blocked": False,
         }

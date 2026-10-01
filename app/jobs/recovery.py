@@ -12,6 +12,7 @@ from app.core.enums import (
     JobStatus,
     JobType,
     VideoStatus,
+    ViewerStatus,
 )
 from app.core.utils import utc_now
 from app.db.models.background_job import BackgroundJob
@@ -146,14 +147,23 @@ class JobRecoveryService:
 
     async def reconcile_stalled_catchups(self) -> List[BackgroundJob]:
         """Finds active viewer catchup states that lack a running/pending background job and re-queues them."""
-        stmt = select(ViewerCatchup).where(
-            ViewerCatchup.status.in_([CatchupStatus.PENDING, CatchupStatus.RUNNING, CatchupStatus.PAUSED])
+        stmt = (
+            select(ViewerCatchup, Viewer)
+            .join(Viewer, ViewerCatchup.viewer_id == Viewer.id)
+            .where(
+                ViewerCatchup.status.in_([CatchupStatus.PENDING, CatchupStatus.RUNNING, CatchupStatus.PAUSED])
+            )
         )
         result = await self.session.execute(stmt)
-        catchups = list(result.scalars().all())
+        rows = list(result.all())
 
         requeued_jobs: List[BackgroundJob] = []
-        for catchup in catchups:
+        for catchup, viewer in rows:
+            # If viewer already blocked the bot, permanently mark catchup BLOCKED and don't re-queue
+            if viewer.status == ViewerStatus.BLOCKED:
+                catchup.status = CatchupStatus.BLOCKED
+                continue
+
             has_job = await self.job_repo.has_active_catchup_job(catchup.client_bot_id, catchup.viewer_id)
             if not has_job:
                 # Reset to PENDING if stuck in RUNNING without job

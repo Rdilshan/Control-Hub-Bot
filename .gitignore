@@ -1,6 +1,4 @@
 # Environment files
-.env
-.env.*
 !.env.example
 
 # Python cache & artifacts
@@ -48,8 +46,9 @@ logs/
 
 # IDE & Editor files
 .idea/
-.vscode/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+config.bat
+node_modules

@@ -1,5 +1,7 @@
 """Main FastAPI application factory and error handlers."""
 
+import utils.transport
+import utils.session
 from typing import Union
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
