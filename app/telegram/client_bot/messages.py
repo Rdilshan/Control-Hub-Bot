@@ -332,6 +332,7 @@ def admin_broadcasts_summary_message(bcasts: dict) -> str:
     cu_wait = f"{bcasts.get('catchup_waiting', 0):,}"
     cu_comp = f"{bcasts.get('catchup_completed_today', 0):,}"
     cu_fail = f"{bcasts.get('catchup_failed', 0):,}"
+    cu_blocked = f"{bcasts.get('catchup_blocked', 0):,}"
 
     return (
         "📤 <b>Broadcasts & Delivery Status</b>\n\n"
@@ -344,5 +345,6 @@ def admin_broadcasts_summary_message(bcasts: dict) -> str:
         f"• ▶️ Running Viewers: <b>{cu_run}</b>\n"
         f"• ⏳ Waiting Viewers: <b>{cu_wait}</b>\n"
         f"• ✅ Completed Today: <b>{cu_comp}</b>\n"
-        f"• ❌ Failed: <b>{cu_fail}</b>"
+        f"• ❌ Failed: <b>{cu_fail}</b>\n"
+        f"• 🚫 Blocked: <b>{cu_blocked}</b>"
     )

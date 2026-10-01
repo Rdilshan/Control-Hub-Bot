@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
-from app.core.enums import JobStatus, JobType
+from app.core.enums import CatchupStatus, JobStatus, JobType
 from app.core.utils import utc_now
 from app.db.models.background_job import BackgroundJob
 from app.logging_config import logger
@@ -50,7 +50,8 @@ class CatchupWorker:
     ) -> Optional[BackgroundJob]:
         remaining = result.get("remaining_count")
         is_completed = result.get("is_completed", False)
-        if not result.get("ok") or is_completed or not remaining or remaining <= 0:
+        is_blocked = result.get("is_blocked", False) or result.get("status") == CatchupStatus.BLOCKED
+        if not result.get("ok") or is_completed or is_blocked or not remaining or remaining <= 0:
             return None
 
         client_bot_id = job.client_bot_id or (job.payload or {}).get("client_bot_id")
@@ -99,7 +100,9 @@ class CatchupWorker:
         try:
             result = await self.service.process_viewer_catchup_batch(viewer_id)
             if result.get("ok"):
-                await self._schedule_next_batch_if_needed(job, result, viewer_id)
+                is_blocked = result.get("is_blocked", False) or result.get("status") == CatchupStatus.BLOCKED
+                if not is_blocked:
+                    await self._schedule_next_batch_if_needed(job, result, viewer_id)
                 await self.job_repo.mark_completed(job_id)
             else:
                 error_code = result.get("error", "CATCHUP_FAILED")
