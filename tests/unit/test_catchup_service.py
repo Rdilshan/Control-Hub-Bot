@@ -444,3 +444,57 @@ async def test_catchup_worker_schedules_next_batch_for_next_day(db_session: Asyn
     catchup = await catchup_repo.get_by_viewer_id(viewer.id)
     assert catchup.status == CatchupStatus.PAUSED
     assert catchup.paused_reason == "BATCH_DELAY"
+
+
+@pytest.mark.asyncio
+async def test_catchup_worker_does_not_reschedule_blocked_viewer(db_session: AsyncSession, catchup_setup):
+    bot = catchup_setup["bot"]
+    viewer = catchup_setup["viewer"]
+
+    db_session.add(
+        ViewerCatchup(
+            client_bot_id=bot.id,
+            viewer_id=viewer.id,
+            status=CatchupStatus.BLOCKED,
+            target_max_video_id=catchup_setup["videos"][-1].id,
+            total_eligible=5,
+            delivered_count=0,
+            last_video_id=0,
+        )
+    )
+    await db_session.flush()
+
+    job_repo = BackgroundJobRepository(db_session)
+    job = await job_repo.create_job(
+        job_type=JobType.CATCHUP,
+        client_bot_id=bot.id,
+        payload={"viewer_id": viewer.id, "client_bot_id": bot.id},
+        queue_name="catchup",
+    )
+    await db_session.commit()
+
+    mock_service = AsyncMock(spec=CatchupService)
+    mock_service.process_viewer_catchup_batch.return_value = {
+        "ok": True,
+        "viewer_id": viewer.id,
+        "status": CatchupStatus.BLOCKED,
+        "delivered_count": 0,
+        "failed_count": 0,
+        "remaining_count": 0,
+        "is_completed": False,
+        "is_blocked": True,
+    }
+
+    worker = CatchupWorker(db_session, catchup_service=mock_service)
+    res = await worker.process_job(job.id)
+
+    assert res["ok"] is True
+    assert res["is_blocked"] is True
+
+    # Ensure no next job was created
+    all_jobs_stmt = select(BackgroundJob).where(
+        BackgroundJob.job_type == JobType.CATCHUP,
+        BackgroundJob.id != job.id,
+    )
+    all_jobs_res = await db_session.execute(all_jobs_stmt)
+    assert len(all_jobs_res.scalars().all()) == 0
